@@ -638,29 +638,30 @@ export default function App() {
         )}
 
         <div className={cn('grid gap-6', hasResults && 'pt-6 border-t')}>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:grid-rows-1">
-            {/* TOP LEFT: USER & README */}
-            <div className="flex flex-col gap-6 lg:h-full">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-sm">User</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="email" className="text-xs text-muted-foreground">Email</Label>
-                    <input
-                      id="email"
-                      type="email"
-                      value={activeTab.email}
-                      onChange={(e) => updateTab(activeTab.id, (tab) => ({ ...tab, email: e.target.value }))}
-                      placeholder="you@example.com"
-                      className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                    />
-                  </div>
-                </CardContent>
-              </Card>
+          {/* USER CARD */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">User</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="email" className="text-xs text-muted-foreground">Email</Label>
+                <input
+                  id="email"
+                  type="email"
+                  value={activeTab.email}
+                  onChange={(e) => updateTab(activeTab.id, (tab) => ({ ...tab, email: e.target.value }))}
+                  placeholder="you@example.com"
+                  className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+              </div>
+            </CardContent>
+          </Card>
 
-            <Card className="flex flex-col flex-1">
+          {/* README & GENERATE SIDE BY SIDE */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* LEFT: README */}
+            <Card className="flex flex-col">
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm">README</CardTitle>
@@ -715,10 +716,8 @@ export default function App() {
               </CardContent>
             </Card>
 
-            </div>
-
-            {/* TOP RIGHT: GENERATE */}
-            <Card className="flex flex-col lg:h-full">
+            {/* RIGHT: GENERATE */}
+            <Card className="flex flex-col">
               <CardHeader>
                 <CardTitle className="text-sm">Generate</CardTitle>
               </CardHeader>
