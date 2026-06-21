@@ -638,9 +638,9 @@ export default function App() {
         )}
 
         <div className={cn('grid gap-6', hasResults && 'pt-6 border-t')}>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* TOP LEFT: README */}
-            <div className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:auto-rows-max">
+            {/* TOP LEFT: USER & README */}
+            <div className="space-y-6 lg:row-span-2">
               <Card>
                 <CardHeader>
                   <CardTitle className="text-sm">User</CardTitle>
@@ -660,7 +660,7 @@ export default function App() {
                 </CardContent>
               </Card>
 
-            <Card>
+            <Card className="flex flex-col flex-1">
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm">README</CardTitle>
@@ -682,22 +682,22 @@ export default function App() {
                   </div>
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="flex flex-col flex-1">
                 {activeTab.inputMethod === 'paste' ? (
-                  <div className="space-y-1.5">
+                  <div className="space-y-1.5 flex flex-col flex-1">
                     <textarea
                       value={activeTab.readme}
                       onChange={(e) => updateTab(activeTab.id, (tab) => ({ ...tab, readme: e.target.value }))}
                       rows={10}
                       placeholder="# Your Project&#10;&#10;Paste your full README.md here…"
-                      className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring font-mono scrollbar-thin"
+                      className="w-full flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring font-mono scrollbar-thin"
                     />
                     {activeTab.readme && (
                       <p className="text-xs text-muted-foreground text-right">{activeTab.readme.length.toLocaleString()} chars</p>
                     )}
                   </div>
                 ) : (
-                  <label className="flex flex-col items-center justify-center h-32 rounded-md border-2 border-dashed border-input cursor-pointer hover:border-foreground/30 transition-colors gap-2">
+                  <label className="flex flex-col items-center justify-center flex-1 rounded-md border-2 border-dashed border-input cursor-pointer hover:border-foreground/30 transition-colors gap-2">
                     <Upload className="h-5 w-5 text-muted-foreground" />
                     <span className="text-sm text-muted-foreground">
                       {activeTab.readme ? (
