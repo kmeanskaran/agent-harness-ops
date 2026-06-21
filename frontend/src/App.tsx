@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, FileText, Loader2, Trash2, Upload, X, Zap } from 'lucide-react'
+import { AlertCircle, ChevronDown, ChevronRight, FileText, Loader2, RefreshCw, Trash2, Upload, X, Zap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -43,6 +43,8 @@ interface WorkspaceTab {
   selected: Platform[]
   resultCache: Record<string, CachedResult>
   fingerprint: string | null
+  projectId: string | null
+  platformJobIds: Partial<Record<Platform, string>>
   requestedPlatforms: Platform[]
   latestJobId: string | null
   latestJobStatus: string | null
@@ -72,6 +74,8 @@ function createTab(index: number): WorkspaceTab {
     selected: ['x'],
     resultCache: {},
     fingerprint: null,
+    projectId: null,
+    platformJobIds: {},
     requestedPlatforms: [],
     latestJobId: null,
     latestJobStatus: null,
@@ -87,6 +91,7 @@ export default function App() {
   const [tabs, setTabs] = useState<WorkspaceTab[]>(() => [INITIAL_TAB])
   const [activeTabId, setActiveTabId] = useState<string>(() => INITIAL_TAB.id)
   const [activeJobs, setActiveJobs] = useState<ActiveJob[]>([])
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
 
   const activeJobsRef = useRef(activeJobs)
   useEffect(() => { activeJobsRef.current = activeJobs }, [activeJobs])
@@ -342,21 +347,62 @@ export default function App() {
     next.hardParts = item.hard_parts.map((x) => `- ${x}`).join('\n')
     next.tone = item.tone ?? TONES[0]
     next.audience = item.audience ?? AUDIENCES[0]
+
+    // Step 1: aggregate — oldest first so newest wins per platform
+    const projectRuns = activeTab.history
+      .filter((h) => h.project_id === item.project_id)
+      .sort((a, b) => new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime())
+    const merged: CachedResult = {}
+    const allPlatforms = new Set<Platform>()
+    const platformJobIds: Partial<Record<Platform, string>> = {}
+    for (const run of projectRuns) {
+      if (run.x_thread?.length) { merged.xThread = run.x_thread; platformJobIds.x = run.job_id }
+      if (run.linkedin_post) { merged.linkedinPost = run.linkedin_post; platformJobIds.linkedin = run.job_id }
+      if (run.devto_article) { merged.devtoArticle = run.devto_article; platformJobIds.devto = run.job_id }
+      for (const p of run.platforms) allPlatforms.add(p as Platform)
+    }
+
+    // Step 2: override with this specific item's content for its own platforms
+    if (item.x_thread?.length) { merged.xThread = item.x_thread; platformJobIds.x = item.job_id }
+    if (item.linkedin_post) { merged.linkedinPost = item.linkedin_post; platformJobIds.linkedin = item.job_id }
+    if (item.devto_article) { merged.devtoArticle = item.devto_article; platformJobIds.devto = item.job_id }
+
     next.selected = item.platforms.length > 0 ? item.platforms : ['x']
-    next.requestedPlatforms = item.platforms.length > 0 ? item.platforms : ['x']
+    next.requestedPlatforms = allPlatforms.size > 0 ? Array.from(allPlatforms) : ['x']
     next.latestJobId = item.job_id
     next.latestJobStatus = item.status
     next.fingerprint = fp
-    next.resultCache = {
-      [fp]: {
-        xThread: item.x_thread,
-        linkedinPost: item.linkedin_post,
-        devtoArticle: item.devto_article,
-      },
-    }
+    next.projectId = item.project_id
+    next.platformJobIds = platformJobIds
+    next.resultCache = { [fp]: merged }
     next.history = activeTab.history
     setTabs((prev) => [...prev, next])
     setActiveTabId(next.id)
+  }
+
+  // In-place version swap: only updates the clicked run's platforms, keeps everything else
+  const handleLoadHistoryRun = (run: HistoryItem) => {
+    if (activeTab.projectId !== run.project_id || !activeTab.fingerprint) {
+      // Different project — fall back to opening a new tab
+      handleOpenHistoryItem(run)
+      return
+    }
+    updateTab(activeTab.id, (tab) => {
+      const fp = tab.fingerprint!
+      const existing = tab.resultCache[fp] ?? {}
+      const updated = { ...existing }
+      const jobIds = { ...tab.platformJobIds }
+      if (run.x_thread?.length) { updated.xThread = run.x_thread; jobIds.x = run.job_id }
+      if (run.linkedin_post) { updated.linkedinPost = run.linkedin_post; jobIds.linkedin = run.job_id }
+      if (run.devto_article) { updated.devtoArticle = run.devto_article; jobIds.devto = run.job_id }
+      return {
+        ...tab,
+        resultCache: { ...tab.resultCache, [fp]: updated },
+        platformJobIds: jobIds,
+        latestJobId: run.job_id,
+        latestJobStatus: run.status,
+      }
+    })
   }
 
   const handleCloseTab = (tabId: string) => {
@@ -434,22 +480,41 @@ export default function App() {
   const currentCache = activeTab?.fingerprint ? (activeTab.resultCache[activeTab.fingerprint] ?? {}) : {}
   const currentActiveJobs = activeTab ? activeJobs.filter((job) => job.tabId === activeTab.id) : []
   const projectGroups = useMemo(() => {
-    const grouped = new Map<string, { latest: HistoryItem; count: number }>()
+    const grouped = new Map<string, { latest: HistoryItem; count: number; items: HistoryItem[] }>()
     for (const item of activeTab.history) {
       const existing = grouped.get(item.project_id)
       if (!existing) {
-        grouped.set(item.project_id, { latest: item, count: 1 })
+        grouped.set(item.project_id, { latest: item, count: 1, items: [item] })
         continue
       }
       grouped.set(item.project_id, {
         latest: new Date(item.updated_at) > new Date(existing.latest.updated_at) ? item : existing.latest,
         count: existing.count + 1,
+        items: [...existing.items, item],
       })
     }
-    return Array.from(grouped.values()).sort(
-      (a, b) => new Date(b.latest.updated_at).getTime() - new Date(a.latest.updated_at).getTime(),
-    )
+    return Array.from(grouped.values())
+      .map((g) => ({ ...g, items: g.items.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()) }))
+      .sort((a, b) => new Date(b.latest.updated_at).getTime() - new Date(a.latest.updated_at).getTime())
   }, [activeTab.history])
+  const platformVersionLabels = useMemo((): Partial<Record<Platform, string>> => {
+    if (!activeTab.projectId) return {}
+    const labels: Partial<Record<Platform, string>> = {}
+    const projectRuns = activeTab.history.filter((h) => h.project_id === activeTab.projectId)
+    for (const p of ALL_PLATFORMS) {
+      const currentJobId = activeTab.platformJobIds[p]
+      if (!currentJobId) continue
+      const runsForPlatform = projectRuns
+        .filter((h) => h.platforms.includes(p))
+        .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+      const idx = runsForPlatform.findIndex((h) => h.job_id === currentJobId)
+      if (idx >= 0 && runsForPlatform.length > 1) {
+        labels[p] = `v${idx + 1}/${runsForPlatform.length}`
+      }
+    }
+    return labels
+  }, [activeTab.platformJobIds, activeTab.history, activeTab.projectId])
+
   const isGenerating = currentActiveJobs.length > 0
 
   if (!activeTab) return null
@@ -527,31 +592,73 @@ export default function App() {
             result={currentCache}
             requestedPlatforms={activeTab.requestedPlatforms}
             activeJobs={currentActiveJobs}
+            platformVersionLabels={platformVersionLabels}
             onAddPlatform={handleAddPlatform}
             onNewTab={handleNewTab}
           />
         )}
 
-        <div className={cn('grid gap-6 lg:grid-cols-[1.3fr_0.7fr]', hasResults && 'pt-6 border-t')}>
-          <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm">User</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="email" className="text-xs text-muted-foreground">Email</Label>
-                  <input
-                    id="email"
-                    type="email"
-                    value={activeTab.email}
-                    onChange={(e) => updateTab(activeTab.id, (tab) => ({ ...tab, email: e.target.value }))}
-                    placeholder="you@example.com"
-                    className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                  />
+        {hasResults && (
+          <Card id="revise-section" className="mt-6">
+            <CardHeader>
+              <CardTitle className="text-sm">Revise Current Result</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {activeTab.latestJobStatus === 'awaiting_approval' && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  Output is waiting for your approval before it is finalized.
                 </div>
-              </CardContent>
-            </Card>
+              )}
+              <textarea
+                value={activeTab.revisionInstruction}
+                onChange={(e) => updateTab(activeTab.id, (tab) => ({ ...tab, revisionInstruction: e.target.value }))}
+                rows={3}
+                placeholder="Example: make it more technical and less promotional."
+                className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring scrollbar-thin"
+              />
+              <Button
+                variant="outline"
+                className="w-full"
+                disabled={!activeTab.latestJobId || !activeTab.revisionInstruction.trim() || isGenerating}
+                onClick={handleRevise}
+              >
+                Revise With Current Tone Settings
+              </Button>
+              {activeTab.latestJobStatus === 'awaiting_approval' && (
+                <Button
+                  className="w-full"
+                  disabled={!activeTab.latestJobId || isGenerating}
+                  onClick={handleApprove}
+                >
+                  Approve Output
+                </Button>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        <div className={cn('grid gap-6', hasResults && 'pt-6 border-t')}>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* TOP LEFT: README */}
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">User</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="email" className="text-xs text-muted-foreground">Email</Label>
+                    <input
+                      id="email"
+                      type="email"
+                      value={activeTab.email}
+                      onChange={(e) => updateTab(activeTab.id, (tab) => ({ ...tab, email: e.target.value }))}
+                      placeholder="you@example.com"
+                      className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    />
+                  </div>
+                </CardContent>
+              </Card>
 
             <Card>
               <CardHeader>
@@ -608,6 +715,68 @@ export default function App() {
               </CardContent>
             </Card>
 
+            </div>
+
+            {/* TOP RIGHT: GENERATE */}
+            <Card className="flex flex-col">
+              <CardHeader>
+                <CardTitle className="text-sm">Generate</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4 flex-1">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {ALL_PLATFORMS.map((p) => {
+                    const cached = activeTab.fingerprint ? platformCached(activeTab, activeTab.fingerprint, p) : false
+                    const pending = currentActiveJobs.some((j) => j.platforms.includes(p))
+                    const selected = activeTab.selected.includes(p)
+                    return (
+                      <label
+                        key={p}
+                        className={cn(
+                          'flex flex-col gap-0.5 rounded-lg border p-2 cursor-pointer transition-colors',
+                          selected ? 'border-foreground bg-muted/30' : 'border-input hover:border-foreground/40',
+                        )}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Checkbox
+                            checked={selected}
+                            onCheckedChange={() => updateTab(activeTab.id, (tab) => ({
+                              ...tab,
+                              selected: tab.selected.includes(p)
+                                ? tab.selected.filter((value) => value !== p)
+                                : [...tab.selected, p],
+                            }))}
+                            id={`plat-${activeTab.id}-${p}`}
+                          />
+                          <span className="text-xs font-medium">{PLATFORM_META[p].label}</span>
+                          {cached && <Badge variant="success" className="text-[9px] px-1 py-0">cached</Badge>}
+                          {pending && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+                        </div>
+                        <p className="text-[11px] text-muted-foreground pl-6 leading-tight">{PLATFORM_META[p].description}</p>
+                      </label>
+                    )
+                  })}
+                </div>
+                <Button
+                  className="w-full mt-auto"
+                  disabled={!activeTab.email.trim() || !activeTab.readme.trim() || activeTab.selected.length === 0 || isGenerating}
+                  onClick={handleGenerate}
+                >
+                  {isGenerating ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Generating…
+                    </>
+                  ) : (
+                    `Generate ${activeTab.selected.map((p) => PLATFORM_META[p].label).join(' + ')}`
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* BOTTOM ROW */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* BOTTOM LEFT: CONTEXT */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-sm">Context <span className="font-normal text-muted-foreground">(optional)</span></CardTitle>
@@ -664,189 +833,144 @@ export default function App() {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm">Generate</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {ALL_PLATFORMS.map((p) => {
-                    const cached = activeTab.fingerprint ? platformCached(activeTab, activeTab.fingerprint, p) : false
-                    const pending = currentActiveJobs.some((j) => j.platforms.includes(p))
-                    const selected = activeTab.selected.includes(p)
-                    return (
-                      <label
-                        key={p}
-                        className={cn(
-                          'flex flex-col gap-1 rounded-lg border p-3 cursor-pointer transition-colors',
-                          selected ? 'border-foreground bg-muted/30' : 'border-input hover:border-foreground/40',
-                        )}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Checkbox
-                            checked={selected}
-                            onCheckedChange={() => updateTab(activeTab.id, (tab) => ({
-                              ...tab,
-                              selected: tab.selected.includes(p)
-                                ? tab.selected.filter((value) => value !== p)
-                                : [...tab.selected, p],
-                            }))}
-                            id={`plat-${activeTab.id}-${p}`}
-                          />
-                          <span className="text-sm font-medium">{PLATFORM_META[p].label}</span>
-                          {cached && <Badge variant="success" className="text-[10px] px-1.5 py-0">cached</Badge>}
-                          {pending && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
-                        </div>
-                        <p className="text-xs text-muted-foreground pl-6">{PLATFORM_META[p].description}</p>
-                      </label>
-                    )
-                  })}
-                </div>
-
-                <Button
-                  className="w-full"
-                  disabled={!activeTab.email.trim() || !activeTab.readme.trim() || activeTab.selected.length === 0 || isGenerating}
-                  onClick={handleGenerate}
-                >
-                  {isGenerating ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Generating…
-                    </>
-                  ) : (
-                    `Generate ${activeTab.selected.map((p) => PLATFORM_META[p].label).join(' + ')}`
-                  )}
-                </Button>
-              </CardContent>
-            </Card>
-
-            {hasResults && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-sm">Revise Current Result</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {activeTab.latestJobStatus === 'awaiting_approval' && (
-                    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                      Output is waiting for your approval before it is finalized.
-                    </div>
-                  )}
-                  <textarea
-                    value={activeTab.revisionInstruction}
-                    onChange={(e) => updateTab(activeTab.id, (tab) => ({ ...tab, revisionInstruction: e.target.value }))}
-                    rows={3}
-                    placeholder="Example: make it more technical and less promotional."
-                    className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring scrollbar-thin"
-                  />
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    disabled={!activeTab.latestJobId || !activeTab.revisionInstruction.trim() || isGenerating}
-                    onClick={handleRevise}
-                  >
-                    Revise With Current Tone Settings
-                  </Button>
-                  {activeTab.latestJobStatus === 'awaiting_approval' && (
-                    <Button
-                      className="w-full"
-                      disabled={!activeTab.latestJobId || isGenerating}
-                      onClick={handleApprove}
-                    >
-                      Approve Output
-                    </Button>
-                  )}
-                </CardContent>
-              </Card>
-            )}
-          </div>
-
-          <div className="space-y-6">
-            {activeTab.email.includes('@') && projectGroups.length > 0 && (
+            {/* BOTTOM RIGHT: HISTORY */}
+            <div className="space-y-6">
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-tight">History</h3>
+            {activeTab.email.includes('@') && (
               <Card>
                 <CardHeader>
                   <CardTitle className="text-sm">Projects</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  {projectGroups.slice(0, 8).map(({ latest, count }) => {
+                  {projectGroups.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-8 gap-4 text-center">
+                      <div className="space-y-1">
+                        <p className="text-sm text-muted-foreground">No projects yet for this email</p>
+                        <p className="text-xs text-muted-foreground">Start creating content by filling in the form and generating</p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          const readmeField = document.querySelector('textarea[placeholder*="Paste your full README"]') as HTMLTextAreaElement
+                          if (readmeField) readmeField.focus()
+                        }}
+                      >
+                        Get Started
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {projectGroups.slice(0, 8).map(({ latest, count, items }) => {
                     const projectTitle = latest.readme
                       .split('\n')
                       .find((line) => line.trim())
                       ?.replace(/^#\s*/, '')
                       .trim() || latest.project_id
+                    const isExpanded = expandedProjects.has(latest.project_id)
+                    const toggleExpand = (e: React.MouseEvent) => {
+                      e.stopPropagation()
+                      setExpandedProjects((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(latest.project_id)) next.delete(latest.project_id)
+                        else next.add(latest.project_id)
+                        return next
+                      })
+                    }
                     return (
-                      <button
-                        key={latest.project_id}
-                        type="button"
-                        onClick={() => handleOpenHistoryItem(latest)}
-                        className="w-full text-left rounded-md border p-3 text-sm space-y-1 hover:border-foreground/40 transition-colors"
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="font-medium">{projectTitle.slice(0, 42)}</span>
-                          <div className="flex items-center gap-2">
-                            <Badge variant="muted">{count} run{count === 1 ? '' : 's'}</Badge>
-                            <span
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                void handleDeleteProject(latest.project_id)
-                              }}
-                              className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </span>
-                          </div>
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {latest.platforms.map((p) => PLATFORM_META[p].label).join(' + ')}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {latest.status} · {new Date(latest.updated_at).toLocaleString()}
-                        </div>
-                      </button>
-                    )
-                  })}
-                </CardContent>
-              </Card>
-            )}
-
-            {activeTab.email.includes('@') && activeTab.history.length > 0 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-sm">Recent History</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {activeTab.history.slice(0, 8).map((item) => (
-                    <button
-                      key={item.job_id}
-                      type="button"
-                      onClick={() => handleOpenHistoryItem(item)}
-                      className="w-full text-left rounded-md border p-3 text-sm space-y-1 hover:border-foreground/40 transition-colors"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="font-medium">{item.platforms.map((p) => PLATFORM_META[p].label).join(' + ')}</span>
-                        <div className="flex items-center gap-2">
-                          <Badge variant={item.parent_job_id ? 'warning' : 'muted'}>
-                            {item.parent_job_id ? 'revision' : 'base'}
-                          </Badge>
+                      <div key={latest.project_id} className="rounded-md border overflow-hidden">
+                        {/* Project header row */}
+                        <div className="flex items-center gap-2 p-3 hover:bg-muted/30 transition-colors">
+                          <button
+                            type="button"
+                            onClick={toggleExpand}
+                            className="text-muted-foreground hover:text-foreground"
+                          >
+                            {isExpanded
+                              ? <ChevronDown className="h-3.5 w-3.5" />
+                              : <ChevronRight className="h-3.5 w-3.5" />}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenHistoryItem(latest)}
+                            className="flex-1 text-left min-w-0"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-sm font-medium truncate">{projectTitle.slice(0, 38)}</span>
+                              <Badge variant="muted" className="shrink-0">{count} run{count === 1 ? '' : 's'}</Badge>
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-0.5">
+                              {new Date(latest.updated_at).toLocaleString()}
+                            </div>
+                          </button>
                           <span
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              void handleDeleteHistoryItem(item)
-                            }}
-                            className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted"
+                            onClick={(e) => { e.stopPropagation(); void handleDeleteProject(latest.project_id) }}
+                            className="shrink-0 rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </span>
                         </div>
+
+                        {/* Per-run history rows (expanded) */}
+                        {isExpanded && (
+                          <div className="border-t divide-y">
+                            {items.map((run) => (
+                              <div key={run.job_id} className="px-3 py-2.5 flex items-start justify-between gap-2 bg-muted/10">
+                                <div className="min-w-0 space-y-0.5">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    {run.platforms.map((p) => (
+                                      <Badge key={p} variant="muted" className="text-[10px] px-1.5 py-0">{PLATFORM_META[p as Platform].label}</Badge>
+                                    ))}
+                                    {run.parent_job_id && (
+                                      <Badge variant="warning" className="text-[10px] px-1.5 py-0">revision</Badge>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] text-muted-foreground">
+                                    {run.status} · {new Date(run.created_at).toLocaleString()}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleLoadHistoryRun(run)}
+                                    title="Load this version"
+                                    className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted"
+                                  >
+                                    <FileText className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      handleLoadHistoryRun(run)
+                                      setTimeout(() => {
+                                        document.getElementById('revise-section')?.scrollIntoView({ behavior: 'smooth' })
+                                      }, 100)
+                                    }}
+                                    title="Load and revise"
+                                    className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted"
+                                  >
+                                    <RefreshCw className="h-3.5 w-3.5" />
+                                  </button>
+                                  <span
+                                    onClick={(e) => { e.stopPropagation(); void handleDeleteHistoryItem(run) }}
+                                    title="Delete this run"
+                                    className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      <div className="text-xs text-muted-foreground">
-                        {item.status} · {item.tone ?? 'default tone'} · {new Date(item.created_at).toLocaleString()}
-                      </div>
-                      <div className="text-[11px] text-muted-foreground font-mono">{item.job_id}</div>
-                    </button>
-                  ))}
+                    )
+                  })}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
+          </div>
           </div>
         </div>
       </main>
