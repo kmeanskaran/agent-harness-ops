@@ -638,9 +638,9 @@ export default function App() {
         )}
 
         <div className={cn('grid gap-6', hasResults && 'pt-6 border-t')}>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:auto-rows-max">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:grid-rows-1">
             {/* TOP LEFT: USER & README */}
-            <div className="space-y-6 lg:row-span-2">
+            <div className="flex flex-col gap-6 lg:h-full">
               <Card>
                 <CardHeader>
                   <CardTitle className="text-sm">User</CardTitle>
@@ -718,7 +718,7 @@ export default function App() {
             </div>
 
             {/* TOP RIGHT: GENERATE */}
-            <Card className="flex flex-col">
+            <Card className="flex flex-col lg:h-full">
               <CardHeader>
                 <CardTitle className="text-sm">Generate</CardTitle>
               </CardHeader>
