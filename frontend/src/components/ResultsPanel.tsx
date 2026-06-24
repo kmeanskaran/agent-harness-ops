@@ -11,6 +11,7 @@ interface ResultsPanelProps {
   result: CachedResult
   requestedPlatforms: Platform[]
   activeJobs: ActiveJob[]
+  platformVersionLabels?: Partial<Record<Platform, string>>
   onAddPlatform: (platform: Platform) => void
   onNewTab: () => void
 }
@@ -72,6 +73,7 @@ export function ResultsPanel({
   result,
   requestedPlatforms,
   activeJobs,
+  platformVersionLabels = {},
   onAddPlatform,
   onNewTab,
 }: ResultsPanelProps) {
@@ -91,6 +93,9 @@ export function ResultsPanel({
             {requestedPlatforms.map((p) => (
               <TabsTrigger key={p} value={p} className="gap-1.5">
                 {PLATFORM_META[p].label}
+                {platformVersionLabels[p] && (
+                  <span className="text-[10px] font-mono text-muted-foreground">{platformVersionLabels[p]}</span>
+                )}
                 {isPending(p) && <Loader2 className="h-3 w-3 animate-spin" />}
               </TabsTrigger>
             ))}

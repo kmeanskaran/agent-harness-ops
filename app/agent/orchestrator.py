@@ -188,6 +188,12 @@ Rules:
 @lru_cache
 def build_orchestrator():
     """Construct the compiled orchestrator graph once."""
+    from langchain_core.globals import set_llm_cache
+
+    from app.agent.cache import RedisLLMCache
+
+    set_llm_cache(RedisLLMCache())
+
     model = get_model()
     backend = StateBackend()
 
