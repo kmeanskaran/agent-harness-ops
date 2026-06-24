@@ -46,10 +46,11 @@ cp .env.example .env
 ```bash
 docker compose up --build
 # API on localhost:8000
+# Frontend on localhost:5173 (React dev server)
 # Worker + Redis in background
 ```
 
-**Local (3 terminals):**
+**Local (4 terminals):**
 ```bash
 # Terminal 1: Redis
 redis-server
@@ -57,8 +58,12 @@ redis-server
 # Terminal 2: Celery worker
 uv run celery -A app.worker.celery_app worker --loglevel=info
 
-# Terminal 3: FastAPI
+# Terminal 3: FastAPI API
 uv run uvicorn main:app --reload --port 8000
+
+# Terminal 4: React frontend (from frontend/ directory)
+cd frontend && npm run dev
+# Frontend on http://localhost:5173
 ```
 
 **One-off (no queue):**
@@ -66,7 +71,26 @@ uv run uvicorn main:app --reload --port 8000
 uv run python -m scripts.run_once
 ```
 
-### 3. Test It
+### 3. Access Frontend
+
+Open in browser:
+
+```
+http://localhost:5173
+```
+
+Or if running Docker with frontend container:
+```
+http://localhost:3000
+```
+
+You'll see:
+- Input fields for README, learnings, hard_parts, tone, audience
+- Generate buttons for X, LinkedIn, Article
+- Real-time job status tracking
+- Result display when complete
+
+### 4. Test via API (curl)
 
 ```bash
 curl -X POST http://localhost:8000/generate-x-post \
@@ -85,6 +109,8 @@ Poll for results:
 ```bash
 curl http://localhost:8000/result/abc123
 ```
+
+Or visit: `http://localhost:8000/docs` for interactive API explorer (Swagger UI)
 
 ---
 
