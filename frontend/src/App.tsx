@@ -209,7 +209,58 @@ export default function App() {
     updateTab(activeTab.id, (tab) => ({ ...tab, error: null }))
     const payload = buildPayload(activeTab)
     const fp = makeFingerprint(payload)
+
+    // Check which platforms are already cached
     const toGenerate = activeTab.selected.filter((p) => !platformCached(activeTab, fp, p))
+
+    // Auto-detect projectId from history if not set
+    let detectedProjectId = activeTab.projectId
+    if (!detectedProjectId && activeTab.history.length > 0) {
+      // Find a project that matches this README
+      const matching = activeTab.history.find((h) => h.readme === activeTab.readme)
+      if (matching) {
+        detectedProjectId = matching.project_id
+        updateTab(activeTab.id, (tab) => ({ ...tab, projectId: detectedProjectId }))
+      }
+    }
+
+    // Try to load from project history if this is an existing project
+    if (toGenerate.length > 0 && detectedProjectId) {
+      const projectRuns = activeTab.history.filter((h) => h.project_id === detectedProjectId)
+      const cached: Partial<Record<Platform, boolean>> = {}
+
+      // Mark which platforms are available in project history
+      for (const run of projectRuns) {
+        if (run.x_thread?.length) cached.x = true
+        if (run.linkedin_post) cached.linkedin = true
+        if (run.devto_article) cached.devto = true
+      }
+
+      // If all requested platforms exist in history, load from there instead
+      if (toGenerate.every((p) => cached[p])) {
+        const merged: CachedResult = {}
+        const jobIds: Partial<Record<Platform, string>> = {}
+
+        // Aggregate results from project runs (newest wins)
+        for (const run of projectRuns) {
+          if (run.x_thread?.length) { merged.xThread = run.x_thread; jobIds.x = run.job_id }
+          if (run.linkedin_post) { merged.linkedinPost = run.linkedin_post; jobIds.linkedin = run.job_id }
+          if (run.devto_article) { merged.devtoArticle = run.devto_article; jobIds.devto = run.job_id }
+        }
+
+        // Update cache and display results
+        updateTab(activeTab.id, (tab) => ({
+          ...tab,
+          fingerprint: fp,
+          title: renameTab(tab),
+          resultCache: { ...tab.resultCache, [fp]: merged },
+          platformJobIds: jobIds,
+          requestedPlatforms: [...new Set([...tab.requestedPlatforms, ...tab.selected])] as Platform[],
+          selected: activeTab.selected,
+        }))
+        return
+      }
+    }
 
     updateTab(activeTab.id, (tab) => ({
       ...tab,
@@ -247,6 +298,66 @@ export default function App() {
 
   const handleAddPlatform = async (platform: Platform) => {
     if (!activeTab || !activeTab.fingerprint) return
+
+    // Auto-detect projectId from history if not set
+    let detectedProjectId = activeTab.projectId
+    if (!detectedProjectId && activeTab.history.length > 0) {
+      const matching = activeTab.history.find((h) => h.readme === activeTab.readme)
+      if (matching) {
+        detectedProjectId = matching.project_id
+        updateTab(activeTab.id, (tab) => ({ ...tab, projectId: detectedProjectId }))
+      }
+    }
+
+    // Check if platform is already cached from project history
+    if (detectedProjectId) {
+      const projectRuns = activeTab.history.filter((h) => h.project_id === detectedProjectId)
+      for (const run of projectRuns) {
+        let cached = false
+        let result: any = null
+        let jobId = ''
+
+        if (platform === 'x' && run.x_thread?.length) {
+          cached = true
+          result = run.x_thread
+          jobId = run.job_id
+        } else if (platform === 'linkedin' && run.linkedin_post) {
+          cached = true
+          result = run.linkedin_post
+          jobId = run.job_id
+        } else if (platform === 'devto' && run.devto_article) {
+          cached = true
+          result = run.devto_article
+          jobId = run.job_id
+        }
+
+        if (cached) {
+          // Load from cache instead of generating
+          const fp = activeTab.fingerprint
+          const existing = activeTab.resultCache[fp] ?? {}
+          const updated = { ...existing }
+          const jobIds = { ...activeTab.platformJobIds }
+
+          if (platform === 'x') updated.xThread = result as string[]
+          else if (platform === 'linkedin') updated.linkedinPost = result as string
+          else if (platform === 'devto') updated.devtoArticle = result as string
+          jobIds[platform] = jobId
+
+          updateTab(activeTab.id, (tab) => ({
+            ...tab,
+            error: null,
+            resultCache: { ...tab.resultCache, [fp]: updated },
+            platformJobIds: jobIds,
+            requestedPlatforms: tab.requestedPlatforms.includes(platform)
+              ? tab.requestedPlatforms
+              : [...tab.requestedPlatforms, platform],
+          }))
+          return
+        }
+      }
+    }
+
+    // If not in cache, generate new
     updateTab(activeTab.id, (tab) => ({
       ...tab,
       error: null,
@@ -254,6 +365,7 @@ export default function App() {
         ? tab.requestedPlatforms
         : [...tab.requestedPlatforms, platform],
     }))
+
     try {
       const { job_id, thread_id, parent_job_id } = await submitJob([platform], buildPayload(activeTab))
       setActiveJobs((prev) => [
@@ -588,14 +700,16 @@ export default function App() {
         )}
 
         {hasResults && (
-          <ResultsPanel
-            result={currentCache}
-            requestedPlatforms={activeTab.requestedPlatforms}
-            activeJobs={currentActiveJobs}
-            platformVersionLabels={platformVersionLabels}
-            onAddPlatform={handleAddPlatform}
-            onNewTab={handleNewTab}
-          />
+          <div data-results-panel>
+            <ResultsPanel
+              result={currentCache}
+              requestedPlatforms={activeTab.requestedPlatforms}
+              activeJobs={currentActiveJobs}
+              platformVersionLabels={platformVersionLabels}
+              onAddPlatform={handleAddPlatform}
+              onNewTab={handleNewTab}
+            />
+          </div>
         )}
 
         {hasResults && (
@@ -890,11 +1004,17 @@ export default function App() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleOpenHistoryItem(latest)}
-                            className="flex-1 text-left min-w-0"
+                            onClick={() => {
+                              handleOpenHistoryItem(latest)
+                              setTimeout(() => {
+                                document.querySelector('[data-results-panel]')?.scrollIntoView({ behavior: 'smooth' })
+                              }, 100)
+                            }}
+                            className="flex-1 text-left min-w-0 cursor-pointer"
+                            title="Click to open and view this project"
                           >
                             <div className="flex items-center justify-between gap-2">
-                              <span className="text-sm font-medium truncate">{projectTitle.slice(0, 38)}</span>
+                              <span className="text-sm font-medium truncate hover:underline">{projectTitle.slice(0, 38)}</span>
                               <Badge variant="muted" className="shrink-0">{count} run{count === 1 ? '' : 's'}</Badge>
                             </div>
                             <div className="text-xs text-muted-foreground mt-0.5">
@@ -904,6 +1024,7 @@ export default function App() {
                           <span
                             onClick={(e) => { e.stopPropagation(); void handleDeleteProject(latest.project_id) }}
                             className="shrink-0 rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
+                            title="Delete this project"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </span>
