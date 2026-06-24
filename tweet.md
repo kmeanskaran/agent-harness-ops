@@ -62,7 +62,7 @@ DevVoice implements the **Agent Harness** pattern—a framework for coordinating
 
 **State Backend:** Each job gets an isolated in-memory workspace where agents read and write files. This prevents state leakage across jobs and keeps the system modular.
 
-```
+```text
 Per-Job State:
 ├── /workspace/{job_id}/brief.md (task input)
 ├── /workspace/{job_id}/extracted_insights.md (extraction output)
@@ -90,7 +90,7 @@ This design keeps prompts maintainable, reusable, and cacheable.
 
 **Subagents:** Five specialized actors coordinated by an orchestrator:
 
-```
+```text
 Orchestrator
 ├── Extractor (reads brief → writes extracted_insights)
 ├── X-Writer (reads insights → writes x_draft)
@@ -152,7 +152,7 @@ DevVoice layers two caching systems on top:
 
 ### Full Pipeline
 
-```
+```text
 User submits README + metadata
         ↓
 FastAPI validates & enqueues job in Redis
@@ -232,7 +232,7 @@ User approves or revises
 
 ### Data Models
 
-```
+```text
 User
 ├── Email (PK)
 ├── Projects (FK)
@@ -267,7 +267,7 @@ Revision
 
 When a user clicks Generate:
 
-```python
+```text
 1. Extract payload (readme, tone, audience, platforms, learnings, hard_parts)
 2. Create fingerprint = SHA-256(payload)
 3. Auto-detect projectId from history if README matches
@@ -290,7 +290,7 @@ When a user clicks Generate:
 ## Impact & Benefits
 
 | Layer | Benefit | Mechanism |
-|-------|---------|-----------|
+| --- | --- | --- |
 | **User Experience** | Instant results for recurring work | Smart cache detection |
 | **API Efficiency** | 70%+ fewer calls on recurring projects | Cache-first logic |
 | **Token Cost** | Zero input tokens on cache hits | Redis + Anthropic caching |
@@ -301,7 +301,7 @@ When a user clicks Generate:
 
 ## How It All Fits Together
 
-```
+```text
 User Interaction Layer (Frontend)
 ├─ Smart cache detection
 ├─ Clickable projects
@@ -337,7 +337,8 @@ Storage Layer (PostgreSQL + Redis)
 ### Scenario: Content Iteration
 
 **Day 1:**
-```
+
+```text
 User: Pastes "Building Distributed Systems" README
 System: Detects new project → Generates X, LinkedIn, dev.to
 Result: Stored in PostgreSQL, cached in Redis
@@ -345,7 +346,8 @@ User: Approves X and LinkedIn, revises dev.to
 ```
 
 **Day 2:**
-```
+
+```text
 User: "Let me try a more technical tone for LinkedIn"
 Action: Pastes same README, selects just LinkedIn
 System: 
@@ -358,7 +360,8 @@ Token cost: 10% of full regeneration
 ```
 
 **Day 3:**
-```
+
+```text
 User: "Show me all my README content"
 Action: Clicks project name in sidebar
 System:
