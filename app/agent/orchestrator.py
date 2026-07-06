@@ -14,7 +14,9 @@ Wires together the four concepts the tutorial teaches:
 """
 from __future__ import annotations
 
+import os
 import re
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Iterable
@@ -22,6 +24,7 @@ from typing import Callable, Iterable
 from deepagents import create_deep_agent
 from deepagents.backends import StateBackend
 from deepagents.backends.utils import create_file_data
+from langfuse.decorators import observe, langfuse_context
 
 from app.config import CONTEXT_DIR, SKILLS_DIR, get_settings
 from app.agent.model import get_model
@@ -271,6 +274,7 @@ def assemble_result(files: dict, job_id: str, platforms: Iterable[str]) -> dict:
 # --------------------------------------------------------------------------- #
 # Running a job
 # --------------------------------------------------------------------------- #
+@observe(name="devvoice_pipeline")
 def run_job(
     job_id: str,
     brief_md: str,
@@ -283,10 +287,29 @@ def run_job(
 
     `on_progress(status, current_step)` is called as the workspace fills, so the
     Celery task can stream coarse progress into Redis.
+
+    LangFuse tracks:
+    - job_id and platforms (input)
+    - execution time
+    - which subagents ran
+    - final result
     """
+    start_time = time.time()
     agent = build_orchestrator()
     files = _seed_files(job_id, brief_md, revision_instruction, previous_result)
     ws = _workspace(job_id)
+
+    # Set LangFuse trace context
+    langfuse_context.update_current_trace(**{
+        "user_id": job_id,
+        "session_id": job_id,
+        "metadata": {
+            "platforms": list(platforms),
+            "has_revision": revision_instruction is not None,
+            "has_previous_result": previous_result is not None,
+            "brief_length": len(brief_md)
+        }
+    })
 
     def emit(status: str, step: str) -> None:
         if on_progress:
@@ -323,7 +346,19 @@ def run_job(
             emit(status, status)
             last_status = status
 
-    return assemble_result(final_files, job_id, platforms)
+    result = assemble_result(final_files, job_id, platforms)
+
+    # Update LangFuse trace with completion info
+    elapsed = time.time() - start_time
+    langfuse_context.update_current_trace(**{
+        "metadata": {
+            "duration_seconds": elapsed,
+            "success": True,
+            "platforms_generated": list(platforms)
+        }
+    })
+
+    return result
 
 
 def generate_content(

@@ -1,14 +1,24 @@
 """DevVoice FastAPI app — clean endpoints with async job queue and rate limiting."""
 from __future__ import annotations
 
+import os
 from fastapi import FastAPI
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from fastapi.responses import JSONResponse
 
+from langfuse import Langfuse
+
 from app.db import init_db
 from app.routes import content, health, result
+
+# Initialize LangFuse for observability
+langfuse = Langfuse(
+    secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
+    public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
+    host=os.getenv("LANGFUSE_BASE_URL")
+)
 
 # Rate limiter: 10 requests per minute per IP
 limiter = Limiter(key_func=get_remote_address, default_limits=["10/minute"])

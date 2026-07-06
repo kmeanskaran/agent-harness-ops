@@ -1,16 +1,36 @@
-"""Content generation endpoints — single-platform shortcuts + multi-platform /generate."""
+"""Content generation endpoints — single-platform shortcuts + multi-platform /generate.
+
+Token optimization built-in:
+- Validates README size at API boundary
+- Estimates token usage upfront
+- Truncates large inputs before queuing
+"""
 from __future__ import annotations
 
+import logging
 import uuid
+import os
 
 from fastapi import APIRouter, HTTPException, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+from langfuse.decorators import observe, langfuse_context
+from langfuse import Langfuse
 
 from app import db
 from app import redis_store
+from app.agent.token_utils import estimate_job_tokens, validate_readme_size, truncate_readme
 from app.models import ApprovalRequest, ContentRequest, HistoryItem, HistoryResponse, JobResponse, RevisionRequest, UserProfileResponse
 from app.worker.tasks import generate_content_task
+
+logger = logging.getLogger(__name__)
+
+# Initialize LangFuse
+langfuse = Langfuse(
+    secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
+    public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
+    host=os.getenv("LANGFUSE_BASE_URL")
+)
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -23,15 +43,62 @@ def _write_key(request: Request) -> str:
 write_limiter = Limiter(key_func=_write_key)
 
 
+@observe(name="enqueue_generation_job")
 def _enqueue(req: ContentRequest, platforms: list[str]) -> JobResponse:
+    """Enqueue a content generation job and track it in LangFuse.
+
+    Token optimization: Validates and estimates tokens upfront.
+    """
     job_id = uuid.uuid4().hex[:12]
     db.upsert_user(req.email)
     thread_id = uuid.uuid4().hex
     project_id = db.project_id_for_readme(req.readme)
     db.upsert_project(project_id, req.email, req.readme)
+
+    # ========== TOKEN OPTIMIZATION: VALIDATE UPFRONT ==========
+    readme = req.readme
+    readme_was_truncated = False
+
+    is_valid, error_msg = validate_readme_size(readme, max_chars=100000, max_tokens=12000)
+    if not is_valid:
+        logger.warning(f"[{job_id}] README size validation: {error_msg}")
+        readme = truncate_readme(readme, max_tokens=10000)
+        readme_was_truncated = True
+
+    # Estimate tokens for the job
+    token_estimate = estimate_job_tokens(
+        readme=readme,
+        learnings=req.learnings,
+        hard_parts=req.hard_parts,
+        tone=req.tone,
+        audience=req.audience,
+    )
+
+    # Track in LangFuse
+    langfuse_context.update_current_trace(**{
+        "user_id": req.email,
+        "session_id": job_id,
+        "metadata": {
+            "job_id": job_id,
+            "email": req.email,
+            "platforms": platforms,
+            "tone": req.tone,
+            "audience": req.audience,
+            "readme_length": len(readme),
+            "readme_was_truncated": readme_was_truncated,
+            "estimated_tokens": token_estimate["total"],
+            "token_breakdown": token_estimate,
+            "learnings_count": len(req.learnings) if req.learnings else 0,
+            "hard_parts_count": len(req.hard_parts) if req.hard_parts else 0,
+        }
+    })
+
+    if readme_was_truncated:
+        logger.info(f"[{job_id}] README truncated | original: {len(req.readme)} chars → {len(readme)} chars")
+
     payload = {
         "email": req.email,
-        "readme": req.readme,
+        "readme": readme,  # Use truncated README if necessary
         "learnings": req.learnings,
         "hard_parts": req.hard_parts,
         "tone": req.tone,
@@ -42,6 +109,7 @@ def _enqueue(req: ContentRequest, platforms: list[str]) -> JobResponse:
         "parent_job_id": None,
         "revision_instruction": None,
         "previous_result": None,
+        "readme_was_truncated": readme_was_truncated,
     }
     db.create_job_record(
         job_id=job_id,

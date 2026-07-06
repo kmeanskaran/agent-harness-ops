@@ -1,316 +1,200 @@
 # DevVoice — Content Creation Agent Harness
 
-Turn a GitHub README into polished X threads, LinkedIn posts, and articles using 5 specialized AI agents. Every claim fact-checked against the source.
+Turn a GitHub README into a reviewed X thread, LinkedIn post, and dev.to article. Five specialized agents (extract → write → review) keep every claim grounded in the source — nothing hallucinated, and a human approves before anything is final.
 
-## Overview
+Built as a reference implementation of the **Agent Harness** pattern: state backend + layered context + skills + subagents on the inside; async queue, dual storage, cost control, and tracing on the outside. Full write-up in [docs/doc.md](docs/doc.md), diagrams in [docs/full_diagram.md](docs/full_diagram.md).
 
-**What it does:** FastAPI accepts a README. Celery queues the job. DeepAgents orchestrates 5 agents (Extractor → Writers → Reviewer) in parallel. Results cached aggressively. Returns optimized content for each platform.
+## What's Inside
 
-**Why it works:** Specialization beats generalization. Each agent masters one platform. Isolation prevents hallucinations. Caching drops cost by 70%.
+| Layer | Tech | Role |
+| --- | --- | --- |
+| API | FastAPI + slowapi | Validates input, caps README size, rate-limits, enqueues jobs |
+| Queue | Celery + Redis | Async job execution; workers scale horizontally |
+| Agents | DeepAgents + LangChain | Orchestrator delegating to extractor, 3 platform writers, reviewer |
+| LLM | Ollama / Groq / OpenAI / Anthropic | Swappable via `MODEL_PROVIDER`; Anthropic gets prompt caching |
+| Storage | PostgreSQL + Redis | Postgres: users, projects, jobs, revision chains. Redis: live status, results (TTL), LLM response cache |
+| Observability | Langfuse | Traces every stage, keyed by job_id |
+| Frontend | React + Vite + TS, nginx | Tab-based workspace: generate, track progress, approve, revise, browse history |
 
-**Tech Stack:** FastAPI (API) + Celery (queue) + Redis (cache + broker) + DeepAgents (orchestration) + Ollama/Groq/OpenAI/Anthropic (LLM)
+### How a job flows
 
----
-
-## System Components
-
-**FastAPI** — REST API server. Validates input, creates job, returns job_id immediately (no blocking).
-
-**Redis** — In-memory store. Acts as Celery broker, caches LLM responses, tracks job status, auto-expires results after 2 hours.
-
-**Celery** — Distributed task queue. Workers poll Redis, pick up jobs, run DeepAgents orchestrator async. Add more workers to scale.
-
-**DeepAgents** — Multi-agent framework. Runs 5 subagents in parallel with isolated memory. Manages context, skills, state. Prevents hallucinations.
-
-**Orchestrator** — Coordinates agents: Extractor (pulls facts) → X-Writer + LinkedIn-Writer + Article-Writer (optimize for platform) → Reviewer (fact-checks).
-
----
-
-## Quick Start
-
-### 1. Install & Configure
-
-```bash
-# Install dependencies
-uv sync
-
-# Copy .env template
-cp .env.example .env
-
-# Edit .env: choose model provider (ollama, groq, openai, anthropic)
+```text
+Browser → nginx → FastAPI ──enqueue──→ Redis ──→ Celery worker
+                     │                              │
+                     └─ returns job_id instantly    └─ DeepAgents pipeline:
+                                                       extractor → writers → reviewer
+Frontend polls /result/{job_id} ←── status in Redis ←──┘
+Job lands in awaiting_approval → human approves, or revises (spawns child job)
 ```
 
-### 2. Choose Run Mode
+## Getting Started
 
-**Docker (recommended):**
+### Prerequisites
+
+- Docker Desktop (easiest path), **or** for local dev: Python 3.13+, [uv](https://docs.astral.sh/uv/), Node 20+, Redis, PostgreSQL
+- An LLM: [Ollama](https://ollama.com) running locally (default, free), or an API key for Groq / OpenAI / Anthropic
+
+### 1. Clone & configure
+
+```bash
+git clone <repo-url>
+cd agent-harness-ops
+cp .env.example .env
+# Edit .env — pick a provider and fill ONLY its key (see Configuration below)
+```
+
+### 2. Run with Docker (recommended)
+
 ```bash
 docker compose up --build
-# API on localhost:8000
-# Frontend on localhost:5173 (React dev server)
-# Worker + Redis in background
 ```
 
-**Local (4 terminals):**
-```bash
-# Terminal 1: Redis
-redis-server
+| Service | URL |
+| --- | --- |
+| Frontend | <http://localhost:3000> |
+| API + Swagger UI | <http://localhost:8000/docs> |
+| PostgreSQL | localhost:5432 (`devvoice`/`devvoice`) |
+| Redis | localhost:6379 |
 
-# Terminal 2: Celery worker
+> **Ollama users:** inside containers, `localhost` is the container. Set
+> `OLLAMA_BASE_URL=http://host.docker.internal:11434` in `.env`.
+
+### 3. Or run locally (development)
+
+```bash
+uv sync                      # install Python deps into .venv
+cd frontend && npm install   # install frontend deps
+```
+
+Then four terminals:
+
+```bash
+# 1 — infra (or run redis/postgres natively)
+docker compose up postgres redis
+
+# 2 — Celery worker
 uv run celery -A app.worker.celery_app worker --loglevel=info
 
-# Terminal 3: FastAPI API
+# 3 — API (hot reload)
 uv run uvicorn main:app --reload --port 8000
 
-# Terminal 4: React frontend (from frontend/ directory)
-cd frontend && npm run dev
-# Frontend on http://localhost:5173
+# 4 — frontend dev server (hot reload)
+cd frontend && npm run dev   # http://localhost:5173
 ```
 
-**One-off (no queue):**
-```bash
-uv run python -m scripts.run_once
-```
-
-### 3. Access Frontend
-
-Open in browser:
-
-```
-http://localhost:5173
-```
-
-Or if running Docker with frontend container:
-```
-http://localhost:3000
-```
-
-You'll see:
-- Input fields for README, learnings, hard_parts, tone, audience
-- Generate buttons for X, LinkedIn, Article
-- Real-time job status tracking
-- Result display when complete
-
-### 4. Test via API (curl)
+### 4. Smoke test
 
 ```bash
-curl -X POST http://localhost:8000/generate-x-post \
+curl -X POST http://localhost:8000/generate \
   -H 'Content-Type: application/json' \
   -d '{
-    "readme": "# MyProject - uses Redis pub/sub for real-time updates",
-    "learnings": ["Pub/sub 28x faster than polling"],
+    "email": "you@example.com",
+    "readme": "# MyProject — uses Redis pub/sub for real-time updates",
+    "learnings": ["Pub/sub was 28x faster than polling"],
     "hard_parts": ["Celery task state across restarts"],
-    "tone": "honest and practical"
+    "tone": "honest and practical",
+    "platforms": ["x"]
   }'
+# → { "job_id": "abc123...", "status": "queued", ... }
+
+curl http://localhost:8000/result/<job_id>   # poll until awaiting_approval
 ```
-
-Returns: `{ "job_id": "abc123", "status": "queued" }`
-
-Poll for results:
-```bash
-curl http://localhost:8000/result/abc123
-```
-
-Or visit: `http://localhost:8000/docs` for interactive API explorer (Swagger UI)
-
----
 
 ## API Reference
 
-**Base:** `http://localhost:8000`
+Interactive docs at `http://localhost:8000/docs`.
 
-**Endpoints:**
-- `POST /generate-x-post` — Create X thread job
-- `POST /generate-linkedin-post` — Create LinkedIn job
-- `POST /generate-article` — Create article job
-- `GET /result/{job_id}` — Check job status and results
-- `GET /health` — Health check
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /generate` | Enqueue generation for one or more platforms (`x`, `linkedin`, `devto`) |
+| `POST /generate-x-post` / `-linkedin-post` / `-article` | Single-platform shortcuts |
+| `GET /result/{job_id}` | Poll status, current step, and results |
+| `POST /revise/{job_id}` | Create a revision (child job) with an instruction |
+| `POST /approve/{job_id}` | Approve an `awaiting_approval` job |
+| `GET /history/{email}` | All jobs for a user, grouped by project |
+| `DELETE /history/{email}/{job_id}` | Delete a job |
+| `DELETE /projects/{email}/{project_id}` | Delete a project and its jobs |
+| `GET /health` | Service health |
 
-**Request body (all endpoints):**
-```json
-{
-  "readme": "string (required)",
-  "learnings": ["string"],
-  "hard_parts": ["string"],
-  "tone": "string (default: 'honest and practical')",
-  "audience": "string (default: 'intermediate developers')"
-}
-```
+Job statuses: `queued → running → extracting → writing → reviewing → awaiting_approval → completed` (or `failed`).
 
-**Response:**
-```json
-{
-  "job_id": "a1b2c3d4",
-  "status": "completed",
-  "current_step": "completed",
-  "x_thread": ["tweet 1", "tweet 2"],
-  "linkedin_post": "post content",
-  "article": "article content",
-  "review_notes": "✓ All claims verified",
-  "error": null
-}
-```
-
-**Job statuses:** queued → extracting → writing → reviewing → completed (or failed)
-
----
+Rate limits: 10/min on generation endpoints, 20/min on approve/delete (per user/IP).
 
 ## Configuration
 
-### .env Checklist
+All config lives in `.env` (see `.env.example` for the full template). Key settings:
 
-Before pushing, verify `.env` is correct:
-
-- [ ] `.env` exists (copied from `.env.example`)
-- [ ] `.env` is in `.gitignore` (never commit secrets)
-- [ ] `MODEL_PROVIDER` set (ollama, groq, openai, or anthropic)
-- [ ] `REDIS_URL` correct for your setup
-- [ ] API keys only for chosen provider (leave others blank)
-- [ ] No sensitive keys in `.env.example`
-
-### Provider Setup
-
-**Ollama (local):**
-```env
-MODEL_PROVIDER=ollama
-OLLAMA_MODEL=gemma4:31b-cloud
-OLLAMA_BASE_URL=http://localhost:11434
-```
-
-**Anthropic (Claude):**
-```env
-MODEL_PROVIDER=anthropic
-MODEL_NAME=claude-sonnet-4-6
-ANTHROPIC_API_KEY=sk-ant-...
-```
-
-**Groq (free API):**
-```env
-MODEL_PROVIDER=groq
-MODEL_NAME=llama-3.3-70b-versatile
-GROQ_API_KEY=gsk_...
-```
-
-**OpenAI (GPT):**
-```env
-MODEL_PROVIDER=openai
-MODEL_NAME=gpt-4-turbo
-OPENAI_API_KEY=sk-...
-```
-
----
-
-## Pre-Push Checklist
-
-- [ ] All tests pass: `pytest`
-- [ ] No untracked secrets in repo: `grep -r "ANTHROPIC_API_KEY\|GROQ_API_KEY\|OPENAI_API_KEY" --include="*.py"`
-- [ ] `.env` is in `.gitignore` and NOT tracked: `git status | grep .env`
-- [ ] `.env.example` updated with correct template (keys blank)
-- [ ] Python formatting: `black .` or `uv run black .`
-- [ ] Requirements up to date: `uv lock` or `pip freeze > requirements.txt`
-- [ ] README accurate (this file)
-- [ ] No debug prints or `pdb` left in code
-- [ ] Commit message clear and concise
-
-**Final push:**
 ```bash
-git status  # Verify changes
-git log --oneline -5  # Verify commits
-git push origin main
+# --- Model provider (pick one, fill only its key) ---
+MODEL_PROVIDER=ollama          # ollama | groq | openai | anthropic
+OLLAMA_BASE_URL=http://localhost:11434   # host.docker.internal in Docker
+OLLAMA_MODEL=<model-id>
+# GROQ_API_KEY= / OPENAI_API_KEY= / ANTHROPIC_API_KEY=
+
+# --- Infra (docker compose overrides these automatically) ---
+REDIS_URL=redis://localhost:6379/0
+DATABASE_URL=postgresql://devvoice:devvoice@localhost:5432/devvoice
+JOB_TTL_SECONDS=7200
+
+# --- Observability (optional but recommended) ---
+LANGFUSE_SECRET_KEY=
+LANGFUSE_PUBLIC_KEY=
+LANGFUSE_BASE_URL=https://us.cloud.langfuse.com
+
+# --- Reviewer's fact-check tool ---
+TAVILY_API_KEY=
 ```
 
----
+## Contributing / Development Workflow
+
+1. **Branch** off `master`: `git checkout -b feat/<short-name>`
+2. **Develop** with the local setup above — API and frontend both hot-reload; only the Celery worker needs a restart after code changes.
+3. **Keep the lockfile in sync** when you touch dependencies: edit `pyproject.toml`, then run `uv lock` and commit both.
+4. **Before pushing**, run through the checklist below.
+5. **Open a PR** against `master` with a clear description of what changed and why.
+
+Project layout:
+
+```text
+agent-harness-ops/
+├── main.py                      FastAPI entry point
+├── app/
+│   ├── agent/
+│   │   ├── orchestrator.py      Agent harness core (orchestrator + 5 subagents)
+│   │   ├── model.py             Provider factory (+ Anthropic prompt caching)
+│   │   ├── cache.py             RedisLLMCache (response cache, all providers)
+│   │   ├── token_utils.py       README validation / truncation / estimation
+│   │   └── tools.py             fact_check (Tavily) for the reviewer
+│   ├── skills/*/SKILL.md        Per-agent instructions (progressive disclosure)
+│   ├── context/AGENTS.md        Durable shared guidance (agent memory)
+│   ├── routes/                  content.py · result.py · health.py
+│   ├── worker/                  celery_app.py · tasks.py
+│   ├── db.py                    PostgreSQL layer
+│   └── redis_store.py           Live job state
+├── frontend/                    React SPA + nginx (Dockerfile inside)
+├── docs/                        Architecture deep-dive + Mermaid diagrams
+├── docker-compose.yml           postgres · redis · app · worker · frontend
+└── .env.example                 Config template — never commit the real .env
+```
+
+### Pre-push checklist
+
+- [ ] `.env` is **not** staged: `git status --short | grep -c "^A.*\.env$"` should be 0 (it's gitignored — keep it that way)
+- [ ] No real keys in tracked files: `git diff --cached | grep -nEi "sk-lf-[a-f0-9]|sk-ant-api|gsk_[A-Za-z0-9]{20}|tvly-[A-Za-z0-9]"` returns nothing (placeholders like `sk-ant-...` in docs are fine)
+- [ ] `.env.example` has **blank** values for every secret
+- [ ] Lockfile matches `pyproject.toml`: `uv lock --check`
+- [ ] App boots: `docker compose up --build` and `GET /health` returns OK
 
 ## Troubleshooting
 
-**Redis connection refused:** Start Redis first (`redis-server`)
+| Symptom | Fix |
+| --- | --- |
+| `ModuleNotFoundError` running locally | `uv sync` — the venv is out of date with `pyproject.toml` |
+| Worker never picks up jobs | Is Redis up? Is the worker running? `uv run celery -A app.worker.celery_app inspect ping` |
+| Agent calls hang with Ollama in Docker | `OLLAMA_BASE_URL` must be `http://host.docker.internal:11434`, not localhost |
+| `429 Too Many Requests` | Rate limit (10/min). Wait 60s. |
+| Job stuck in `running` | Check worker logs; check the Langfuse trace for the job_id |
 
-**Worker not picking up tasks:** Check worker is running and connected to Redis (`celery inspect stats`)
+## License
 
-**API returns 502:** Ensure Redis and worker both running
-
-**Rate limit (429):** Default 10/min. Wait 60s or change in `main.py`
-
-**Timeout (>2min):** Check model is responding, worker has resources
-
----
-
-## Rate Limiting
-
-- Generation endpoints: **10 requests/minute per IP**
-- Health endpoint: **30 requests/minute per IP**
-- Response header: `X-RateLimit-Remaining` shows requests left
-
----
-
-## Architecture Diagram
-
-```
-README input
-    ↓
-FastAPI (validate) → Redis job store → Celery queue
-    ↓
-Worker picks up → DeepAgents orchestrator
-    ├─ Extractor (pull facts)
-    ├─ Writers (X + LinkedIn + Article in parallel)
-    └─ Reviewer (fact-check)
-    ↓
-Results in Redis → Frontend polls → Displays results
-```
-
----
-
-## Project Structure
-
-```
-agent-harness-ops/
-├── main.py                  FastAPI entry point
-├── app/
-│   ├── agent/
-│   │   ├── orchestrator.py  DeepAgents orchestrator (5 agents)
-│   │   ├── model.py         Model factory (providers)
-│   │   └── cache.py         Prompt caching logic
-│   ├── routes/
-│   │   ├── content.py       POST endpoints
-│   │   ├── result.py        GET endpoints
-│   │   └── health.py        Health check
-│   ├── worker/
-│   │   ├── celery_app.py    Celery config
-│   │   └── tasks.py         @celery_app.task
-│   ├── skills/              Agent instructions (SKILL.md)
-│   ├── context/AGENTS.md    Shared memory
-│   └── redis_store.py       Job store
-├── scripts/run_once.py      One-off test script
-├── .env.example             Template (no secrets)
-├── .env                     Local config (NEVER commit)
-├── docker-compose.yml
-├── requirements.txt
-└── pyproject.toml
-```
-
----
-
-## Cost & Performance
-
-**First run:** $0.20 (all agents execute)
-
-**Cached run:** $0.00 (Redis hit, instant)
-
-**By 100 users:** Cost per request → $0 (70% cost reduction via caching)
-
-**Speed:** 3-5 minutes first run, 50ms cached
-
----
-
-## What's Next
-
-- [ ] Template presets (save tone/audience combos)
-- [ ] Batch operations (regenerate all at once)
-- [ ] Cache analytics dashboard
-- [ ] Team workspaces
-- [ ] Streaming results (output as agents complete)
-
----
-
-**Built with:** DeepAgents, FastAPI, Celery, Redis, Claude Code  
-**License:** MIT  
-**Status:** Production-ready
+MIT

@@ -7,7 +7,12 @@ from pydantic import BaseModel, Field
 class ContentRequest(BaseModel):
     """Input for content generation endpoints."""
     email: str = Field(..., min_length=3, description="Unique user email.")
-    readme: str = Field(..., min_length=1, description="Raw README markdown.")
+    readme: str = Field(
+        ...,
+        min_length=1,
+        max_length=100000,
+        description="Raw README markdown (max 100KB). Large READMEs will be automatically truncated.",
+    )
     learnings: list[str] = Field(default_factory=list, description="Key technical insights.")
     hard_parts: list[str] = Field(default_factory=list, description="Challenging aspects.")
     tone: str = Field(default="honest and practical", description="Voice/style.")
