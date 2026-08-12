@@ -43,6 +43,20 @@ resource "aws_security_group" "ecs" {
     protocol        = "tcp"
     security_groups = [aws_security_group.alb.id]
   }
+  # Frontend nginx -> API, task to task, via Cloud Map DNS.
+  #
+  # REQUIRED: under awsvpc every task gets its own ENI in this security group,
+  # and a security group does NOT implicitly allow traffic between its own
+  # members. Without this rule nginx's /api proxy times out and the ALB returns
+  # 504. docker-compose hides the problem because there both containers share a
+  # bridge network.
+  ingress {
+    description = "API port from other tasks in this SG (nginx /api proxy)"
+    from_port   = 8000
+    to_port     = 8000
+    protocol    = "tcp"
+    self        = true
+  }
   egress {
     from_port   = 0
     to_port     = 0
