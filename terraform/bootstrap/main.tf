@@ -91,6 +91,18 @@ variable "github_repo" {
   default     = "kmeanskaran/agent-harness-ops"
 }
 
+# The only refs that deploy. Anything else in the repo — a feature branch, a
+# non-prod tag, a fork's PR — cannot assume the role even though the workflow
+# file is public and readable. Keep in sync with the `target` job in ci.yml.
+variable "github_deploy_refs" {
+  description = "Git refs allowed to assume the deploy role."
+  type        = list(string)
+  default = [
+    "refs/heads/aws-deployment", # -> dev
+    "refs/tags/prod-*",          # -> prod
+  ]
+}
+
 resource "aws_iam_openid_connect_provider" "github" {
   url             = "https://token.actions.githubusercontent.com"
   client_id_list  = ["sts.amazonaws.com"]
@@ -109,11 +121,13 @@ data "aws_iam_policy_document" "github_assume" {
       variable = "token.actions.githubusercontent.com:aud"
       values   = ["sts.amazonaws.com"]
     }
-    # Only THIS repo (any branch) may assume the role.
+    # Only this repo, and only from the refs that actually deploy. StringLike
+    # so the `prod-*` tag pattern matches; the branch entry has no wildcard, so
+    # it matches exactly.
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:*"]
+      values   = [for r in var.github_deploy_refs : "repo:${var.github_repo}:ref:${r}"]
     }
   }
 }
