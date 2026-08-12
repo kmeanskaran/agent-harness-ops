@@ -65,15 +65,17 @@ The only command you ever run by hand. GitHub cannot authenticate to AWS until
 the role it assumes exists, so this cannot be automated away.
 
 ```bash
-export AWS_PROFILE=mgmt
-cd terraform/bootstrap
-terraform init
-terraform apply -var="aws_profile=mgmt"
-terraform output github_deploy_role_arn
+make aws-bootstrap          # or: make aws-bootstrap profile=other
 ```
 
 Creates the state bucket (versioned, encrypted), the DynamoDB lock table, the
-GitHub OIDC provider, and the deploy role.
+GitHub OIDC provider, and the deploy role — then prints the ARN and the
+remaining setup steps.
+
+Idempotent, and safe to re-run after a `make aws-nuke`: the role name and
+account are fixed, so the ARN is byte-identical every time and the GitHub
+variable never needs changing. To print it again later without applying
+anything, `make aws-arn`.
 
 ### 2. GitHub (once)
 
@@ -335,9 +337,8 @@ catch people:
 
 After a nuke, clear the `AWS_DEPLOY_ROLE_ARN` GitHub variable — the role is
 gone, and clearing it makes the pipeline skip deploys and stay green instead of
-failing on credentials. To come back, re-run bootstrap: the role name and
-account are fixed, so the ARN is identical and the variable can be pasted back
-unchanged.
+failing on credentials. To come back: `make aws-bootstrap`, paste the ARN back
+(it is unchanged), push.
 
 Cost while running is roughly **$70–80/month** (ALB ~$17, RDS ~$14, Redis ~$12,
 three Fargate tasks ~$35). Destroyed between sessions: **$0**.
