@@ -88,7 +88,7 @@ resource "aws_dynamodb_table" "lock" {
 variable "github_repo" {
   description = "GitHub repo allowed to assume the deploy role, as owner/repo."
   type        = string
-  default     = "karan842/agent-harness-ops"
+  default     = "kmeanskaran/agent-harness-ops"
 }
 
 resource "aws_iam_openid_connect_provider" "github" {

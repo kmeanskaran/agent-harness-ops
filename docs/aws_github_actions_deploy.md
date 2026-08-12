@@ -20,7 +20,7 @@ not keys" idea as the Bedrock task role.
 
 ```
 GitHub Actions run ──OIDC token──► IAM role agent-harness-github-deploy ──► deploy
-                    (trusts repo:karan842/agent-harness-ops:*)
+                    (trusts repo:kmeanskaran/agent-harness-ops:*)
 ```
 
 The role + trust policy live in [terraform/cicd.tf](../terraform/cicd.tf).
@@ -43,7 +43,7 @@ terraform init
 terraform workspace new dev
 terraform apply -target=aws_iam_openid_connect_provider.github \
                 -target=aws_iam_role.github_deploy \
-                -var github_repo="karan842/agent-harness-ops"
+                -var github_repo="kmeanskaran/agent-harness-ops"
 terraform output github_deploy_role_arn      # copy this
 ```
 
