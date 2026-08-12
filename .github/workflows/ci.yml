@@ -154,7 +154,18 @@ jobs:
       env: ${{ steps.pick.outputs.env }}
     steps:
       - id: pick
+        env:
+          # Empty until the AWS bootstrap has run and the repo variable is set.
+          ROLE: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
         run: |
+          # No deploy role configured yet -> run checks only, and stay green.
+          # Setting the AWS_DEPLOY_ROLE_ARN repo variable switches deploys on
+          # with no change to this file.
+          if [ -z "$ROLE" ]; then
+            echo "env=" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Deploy skipped::AWS_DEPLOY_ROLE_ARN is not set — ran checks only."
+            exit 0
+          fi
           case "$GITHUB_REF" in
             refs/tags/prod-*)          echo "env=prod" >> "$GITHUB_OUTPUT" ;;
             refs/heads/aws-deployment) echo "env=dev"  >> "$GITHUB_OUTPUT" ;;
