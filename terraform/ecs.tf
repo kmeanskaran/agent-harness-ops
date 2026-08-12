@@ -186,6 +186,11 @@ resource "aws_ecs_task_definition" "frontend" {
       { name = "PORT", value = "80" },
       # nginx proxies /api/ here; Cloud Map resolves it to the API tasks.
       { name = "BACKEND_URL", value = "http://api.${aws_service_discovery_private_dns_namespace.main.name}:8000" },
+      # AmazonProvidedDNS. nginx re-resolves BACKEND_URL against this on each
+      # request, so a replaced API task's new ENI IP is picked up instead of the
+      # cached dead one. The link-local address works in any VPC, unlike the
+      # VPC-CIDR-relative .2 address.
+      { name = "DNS_RESOLVER", value = "169.254.169.253" },
     ]
     logConfiguration = {
       logDriver = "awslogs"
