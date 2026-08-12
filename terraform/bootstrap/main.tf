@@ -91,15 +91,23 @@ variable "github_repo" {
   default     = "kmeanskaran/agent-harness-ops"
 }
 
-# The only refs that deploy. Anything else in the repo — a feature branch, a
-# non-prod tag, a fork's PR — cannot assume the role even though the workflow
-# file is public and readable. Keep in sync with the `target` job in ci.yml.
-variable "github_deploy_refs" {
-  description = "Git refs allowed to assume the deploy role."
+# Which GitHub Actions jobs may assume the deploy role, as OIDC `sub` claims.
+#
+# IMPORTANT: the claim depends on whether the job declares `environment:`.
+#   - Job WITHOUT an environment  -> repo:<owner>/<repo>:ref:<git-ref>
+#   - Job WITH an environment     -> repo:<owner>/<repo>:environment:<name>
+# GitHub substitutes the environment for the ref; it does not include both. So
+# the `ecr` and `build` jobs match on ref, and the `deploy` job — which declares
+# `environment: dev|prod` for the approval gate — matches on environment.
+# Both forms are required. Keep in sync with ci.yml.
+variable "github_deploy_subjects" {
+  description = "OIDC subject claims (after the repo prefix) allowed to assume the deploy role."
   type        = list(string)
   default = [
-    "refs/heads/aws-deployment", # -> dev
-    "refs/tags/prod-*",          # -> prod
+    "ref:refs/heads/aws-deployment", # ecr + build, dev
+    "ref:refs/tags/prod-*",          # ecr + build, prod
+    "environment:dev",               # deploy job, dev
+    "environment:prod",              # deploy job, prod
   ]
 }
 
@@ -121,13 +129,12 @@ data "aws_iam_policy_document" "github_assume" {
       variable = "token.actions.githubusercontent.com:aud"
       values   = ["sts.amazonaws.com"]
     }
-    # Only this repo, and only from the refs that actually deploy. StringLike
-    # so the `prod-*` tag pattern matches; the branch entry has no wildcard, so
-    # it matches exactly.
+    # Only this repo, and only the jobs that actually deploy. StringLike so the
+    # `prod-*` tag pattern matches; entries without a wildcard match exactly.
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = [for r in var.github_deploy_refs : "repo:${var.github_repo}:ref:${r}"]
+      values   = [for s in var.github_deploy_subjects : "repo:${var.github_repo}:${s}"]
     }
   }
 }
