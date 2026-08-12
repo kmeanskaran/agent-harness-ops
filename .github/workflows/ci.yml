@@ -1,0 +1,123 @@
+# CI — runs on every push to master and every PR. No AWS credentials, no deploy.
+#
+#   quality    pre-commit (ruff lint+format, terraform fmt, hygiene, secret scan)
+#   terraform  validate the Terraform config
+#   test       pytest — pure-function unit tests, no services needed
+#   smoke      boot the real stack with docker compose and exercise it
+#
+# The same pre-commit hooks run locally on `git commit`, so CI and your machine
+# are gated by identical rules.
+name: ci
+
+on:
+  push:
+    branches: [master, main, aws-deployment]
+  pull_request:
+
+# A new push to the same branch cancels the previous, still-running CI.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: code quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+
+      # The terraform_fmt hook shells out to the terraform binary.
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Cache pre-commit environments
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Run pre-commit
+        run: uvx pre-commit run --all-files --show-diff-on-failure --color=always
+
+  terraform:
+    name: terraform validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      # -backend=false: validate the config without touching remote state or
+      # needing AWS credentials.
+      - name: Validate
+        run: |
+          cd terraform
+          terraform init -backend=false
+          terraform validate
+
+  test:
+    name: unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      # No .env, no Postgres, no Redis, no model — these tests are pure functions.
+      - name: pytest
+        run: uv run --group dev pytest
+
+  smoke:
+    name: smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # compose reads `env_file: .env`; the committed example has safe defaults
+      # and compose overrides REDIS_URL/DATABASE_URL for the service network.
+      - name: Seed .env
+        run: cp .env.example .env
+
+      # --wait blocks until every service with a healthcheck reports healthy,
+      # so a boot failure fails the job here rather than in the asserts below.
+      - name: Build and start the stack
+        run: docker compose up -d --build --wait
+
+      - name: API is healthy and reaches Redis
+        run: |
+          body=$(curl -fsS --retry 5 --retry-connrefused http://localhost:8000/health)
+          echo "$body"
+          echo "$body" | grep -q '"status":"ok"'
+
+      - name: Frontend is served
+        run: curl -fsS -o /dev/null -w '%{http_code}\n' http://localhost:3000/ | grep -q 200
+
+      # The single most valuable assert: proves nginx's /api proxy is wired, which
+      # is exactly how the ALB reaches the API in AWS.
+      - name: Frontend proxies /api to the API
+        run: curl -fsS http://localhost:3000/api/health | grep -q '"status":"ok"'
+
+      - name: Worker started without crashing
+        run: docker compose ps --services --status running | grep -qx worker
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=200
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v --remove-orphans

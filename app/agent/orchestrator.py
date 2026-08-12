@@ -12,23 +12,22 @@ Wires together the four concepts the tutorial teaches:
   * Subagents          -> extractor, three writers, and a reviewer, each with an
                           isolated context.
 """
+
 from __future__ import annotations
 
-import os
 import re
 import time
+from collections.abc import Callable, Iterable
 from functools import lru_cache
-from pathlib import Path
-from typing import Callable, Iterable
 
 from deepagents import create_deep_agent
 from deepagents.backends import StateBackend
 from deepagents.backends.utils import create_file_data
-from langfuse.decorators import observe, langfuse_context
+from langfuse.decorators import langfuse_context, observe
 
-from app.config import CONTEXT_DIR, SKILLS_DIR, get_settings
 from app.agent.model import get_model
 from app.agent.tools import fact_check
+from app.config import CONTEXT_DIR, SKILLS_DIR
 
 # Virtual paths inside the agent's in-state filesystem.
 SKILLS_ROOT = "/skills"
@@ -79,7 +78,9 @@ def _seed_files(
     if previous_result:
         chunks: list[str] = ["# Previous Output"]
         if previous_result.get("x_thread"):
-            chunks.append("## X Thread\n" + "\n".join(f"- {x}" for x in previous_result["x_thread"]))
+            chunks.append(
+                "## X Thread\n" + "\n".join(f"- {x}" for x in previous_result["x_thread"])
+            )
         if previous_result.get("linkedin_post"):
             chunks.append("## LinkedIn Post\n" + previous_result["linkedin_post"])
         if previous_result.get("devto_article"):
@@ -261,9 +262,7 @@ def assemble_result(files: dict, job_id: str, platforms: Iterable[str]) -> dict:
     if "linkedin" in platforms:
         body = _file_text(files, f"{ws}/linkedin_draft.md") or ""
         # Drop a leading "# LinkedIn Post" heading if present.
-        result["linkedin_post"] = re.sub(
-            r"^#.*\n+", "", body, count=1
-        ).strip()
+        result["linkedin_post"] = re.sub(r"^#.*\n+", "", body, count=1).strip()
     if "devto" in platforms:
         result["devto_article"] = (_file_text(files, f"{ws}/devto_draft.md") or "").strip()
 
@@ -300,16 +299,18 @@ def run_job(
     ws = _workspace(job_id)
 
     # Set LangFuse trace context
-    langfuse_context.update_current_trace(**{
-        "user_id": job_id,
-        "session_id": job_id,
-        "metadata": {
-            "platforms": list(platforms),
-            "has_revision": revision_instruction is not None,
-            "has_previous_result": previous_result is not None,
-            "brief_length": len(brief_md)
+    langfuse_context.update_current_trace(
+        **{
+            "user_id": job_id,
+            "session_id": job_id,
+            "metadata": {
+                "platforms": list(platforms),
+                "has_revision": revision_instruction is not None,
+                "has_previous_result": previous_result is not None,
+                "brief_length": len(brief_md),
+            },
         }
-    })
+    )
 
     def emit(status: str, step: str) -> None:
         if on_progress:
@@ -350,13 +351,15 @@ def run_job(
 
     # Update LangFuse trace with completion info
     elapsed = time.time() - start_time
-    langfuse_context.update_current_trace(**{
-        "metadata": {
-            "duration_seconds": elapsed,
-            "success": True,
-            "platforms_generated": list(platforms)
+    langfuse_context.update_current_trace(
+        **{
+            "metadata": {
+                "duration_seconds": elapsed,
+                "success": True,
+                "platforms_generated": list(platforms),
+            }
         }
-    })
+    )
 
     return result
 
@@ -379,12 +382,8 @@ def generate_content(
     job_id = uuid.uuid4().hex[:12]
 
     # Build brief from inputs
-    learnings_text = (
-        "\n".join(f"- {x}" for x in learnings) if learnings else "- (none provided)"
-    )
-    hard_parts_text = (
-        "\n".join(f"- {x}" for x in hard_parts) if hard_parts else "- (none provided)"
-    )
+    learnings_text = "\n".join(f"- {x}" for x in learnings) if learnings else "- (none provided)"
+    hard_parts_text = "\n".join(f"- {x}" for x in hard_parts) if hard_parts else "- (none provided)"
     brief_md = f"""# Job Brief
 
 ## Requested Platforms

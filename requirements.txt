@@ -4,6 +4,7 @@ langchain-anthropic>=1.4.0
 langchain-openai>=1.2.2
 langchain-groq>=1.1.2
 langchain-ollama>=1.1.0
+langchain-aws>=0.2.10
 psycopg[binary]>=3.2.9
 tavily-python>=0.7.25
 python-dotenv>=1.2.2

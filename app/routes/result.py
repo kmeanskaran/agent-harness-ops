@@ -1,4 +1,5 @@
 """Result endpoint — check job status and retrieve finished content."""
+
 from __future__ import annotations
 
 import json

@@ -5,22 +5,30 @@ Token optimization built-in:
 - Estimates token usage upfront
 - Truncates large inputs before queuing
 """
+
 from __future__ import annotations
 
 import logging
-import uuid
 import os
+import uuid
 
 from fastapi import APIRouter, HTTPException, Request
+from langfuse import Langfuse
+from langfuse.decorators import langfuse_context, observe
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from langfuse.decorators import observe, langfuse_context
-from langfuse import Langfuse
 
-from app import db
-from app import redis_store
-from app.agent.token_utils import estimate_job_tokens, validate_readme_size, truncate_readme
-from app.models import ApprovalRequest, ContentRequest, HistoryItem, HistoryResponse, JobResponse, RevisionRequest, UserProfileResponse
+from app import db, redis_store
+from app.agent.token_utils import estimate_job_tokens, truncate_readme, validate_readme_size
+from app.models import (
+    ApprovalRequest,
+    ContentRequest,
+    HistoryItem,
+    HistoryResponse,
+    JobResponse,
+    RevisionRequest,
+    UserProfileResponse,
+)
 from app.worker.tasks import generate_content_task
 
 logger = logging.getLogger(__name__)
@@ -29,7 +37,7 @@ logger = logging.getLogger(__name__)
 langfuse = Langfuse(
     secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
     public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
-    host=os.getenv("LANGFUSE_BASE_URL")
+    host=os.getenv("LANGFUSE_BASE_URL"),
 )
 
 router = APIRouter()
@@ -75,26 +83,30 @@ def _enqueue(req: ContentRequest, platforms: list[str]) -> JobResponse:
     )
 
     # Track in LangFuse
-    langfuse_context.update_current_trace(**{
-        "user_id": req.email,
-        "session_id": job_id,
-        "metadata": {
-            "job_id": job_id,
-            "email": req.email,
-            "platforms": platforms,
-            "tone": req.tone,
-            "audience": req.audience,
-            "readme_length": len(readme),
-            "readme_was_truncated": readme_was_truncated,
-            "estimated_tokens": token_estimate["total"],
-            "token_breakdown": token_estimate,
-            "learnings_count": len(req.learnings) if req.learnings else 0,
-            "hard_parts_count": len(req.hard_parts) if req.hard_parts else 0,
+    langfuse_context.update_current_trace(
+        **{
+            "user_id": req.email,
+            "session_id": job_id,
+            "metadata": {
+                "job_id": job_id,
+                "email": req.email,
+                "platforms": platforms,
+                "tone": req.tone,
+                "audience": req.audience,
+                "readme_length": len(readme),
+                "readme_was_truncated": readme_was_truncated,
+                "estimated_tokens": token_estimate["total"],
+                "token_breakdown": token_estimate,
+                "learnings_count": len(req.learnings) if req.learnings else 0,
+                "hard_parts_count": len(req.hard_parts) if req.hard_parts else 0,
+            },
         }
-    })
+    )
 
     if readme_was_truncated:
-        logger.info(f"[{job_id}] README truncated | original: {len(req.readme)} chars → {len(readme)} chars")
+        logger.info(
+            f"[{job_id}] README truncated | original: {len(req.readme)} chars → {len(readme)} chars"
+        )
 
     payload = {
         "email": req.email,

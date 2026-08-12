@@ -1,10 +1,10 @@
 """Cache README extractions to avoid reprocessing identical content."""
+
 from __future__ import annotations
 
 import hashlib
 import json
 import logging
-from typing import Optional
 
 from app import redis_store
 
@@ -16,7 +16,7 @@ def readme_hash(readme: str) -> str:
     return hashlib.sha256(readme.encode()).hexdigest()
 
 
-def get_cached_extraction(readme: str) -> Optional[dict]:
+def get_cached_extraction(readme: str) -> dict | None:
     """Retrieve cached extraction if available.
 
     Returns extracted_insights dict if found, None otherwise.

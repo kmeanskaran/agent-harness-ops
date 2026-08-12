@@ -12,6 +12,7 @@ dependencies = [
     "langchain-groq>=1.1.2",
     "langchain-ollama>=1.1.0",
     "langchain-openai>=1.2.2",
+    "aws-bedrock-token-generator>=1.0.0",
     "psycopg[binary]>=3.2.9",
     "python-dotenv>=1.2.2",
     "tavily-python>=0.7.25",
@@ -24,3 +25,41 @@ dependencies = [
     "requests>=2.31.0",
     "langfuse>=2.0.0,<3.0.0",
 ]
+
+# Dev-only tools. Install with:  uv sync --group dev   (or: uv pip install ruff pre-commit pytest)
+[dependency-groups]
+dev = [
+    "ruff>=0.6.0",
+    "pre-commit>=3.7.0",
+    "pytest>=8.0.0",
+]
+
+# --- Ruff: linter + formatter (replaces pylint + flake8 + black + isort) ---
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# App code only; skip generated/vendored dirs.
+exclude = ["frontend", ".venv", "node_modules", "terraform", "dist"]
+
+[tool.ruff.lint]
+# Pragmatic default for an existing codebase — expand later.
+#   E,W pycodestyle · F pyflakes · I import-sort · UP pyupgrade · B bugbear
+select = ["E", "W", "F", "I", "UP", "B"]
+ignore = [
+    "E501", # line length — the formatter handles wrapping
+    "B008", # FastAPI uses function calls in argument defaults (Depends())
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"] # re-exports
+
+[tool.ruff.format]
+quote-style = "double"
+
+# --- pytest ---
+# `pythonpath = ["."]` puts the repo root on sys.path so tests import `app.*`
+# without the project needing to be installed as a package.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"

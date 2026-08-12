@@ -13,13 +13,15 @@ Cache key: SHA-256 of (llm_string + prompt)
 
 TTL defaults to 24 h, configurable via LLM_CACHE_TTL_SECONDS in the environment.
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
 import logging
 import os
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from langchain_core.caches import BaseCache
 from langchain_core.outputs import ChatGeneration, Generation
@@ -41,27 +43,32 @@ def _serialise(generations: Sequence[Generation]) -> str:
     items = []
     for g in generations:
         if isinstance(g, ChatGeneration):
-            items.append({
-                "type": "chat",
-                "text": g.text,
-                "message": {
-                    "type": g.message.type,
-                    "content": g.message.content,
-                    "additional_kwargs": g.message.additional_kwargs,
-                },
-                "generation_info": g.generation_info,
-            })
+            items.append(
+                {
+                    "type": "chat",
+                    "text": g.text,
+                    "message": {
+                        "type": g.message.type,
+                        "content": g.message.content,
+                        "additional_kwargs": g.message.additional_kwargs,
+                    },
+                    "generation_info": g.generation_info,
+                }
+            )
         else:
-            items.append({
-                "type": "base",
-                "text": g.text,
-                "generation_info": g.generation_info,
-            })
+            items.append(
+                {
+                    "type": "base",
+                    "text": g.text,
+                    "generation_info": g.generation_info,
+                }
+            )
     return json.dumps(items)
 
 
 def _deserialise(raw: str) -> list[Generation]:
     from langchain_core.messages import AIMessage
+
     items = json.loads(raw)
     out: list[Generation] = []
     for item in items:
@@ -71,16 +78,20 @@ def _deserialise(raw: str) -> list[Generation]:
                 content=m["content"],
                 additional_kwargs=m.get("additional_kwargs", {}),
             )
-            out.append(ChatGeneration(
-                text=item["text"],
-                message=msg,
-                generation_info=item.get("generation_info"),
-            ))
+            out.append(
+                ChatGeneration(
+                    text=item["text"],
+                    message=msg,
+                    generation_info=item.get("generation_info"),
+                )
+            )
         else:
-            out.append(Generation(
-                text=item["text"],
-                generation_info=item.get("generation_info"),
-            ))
+            out.append(
+                Generation(
+                    text=item["text"],
+                    generation_info=item.get("generation_info"),
+                )
+            )
     return out
 
 

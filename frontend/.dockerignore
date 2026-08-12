@@ -1,0 +1,7 @@
+# Keep host build artifacts out of the image build context.
+# Critical: host node_modules has macOS-native binaries (esbuild/rollup) that
+# would clobber the Linux ones from `npm install` and break `npm run build`.
+node_modules
+dist
+.git
+*.log

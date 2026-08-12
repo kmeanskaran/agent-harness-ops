@@ -12,3 +12,14 @@ wheels/
 # Secrets — never commit the real .env (keep .env.example only)
 .env
 node_modules/
+
+# Terraform — provider binaries (~1.3GB) and state, which contains the DB
+# password in cleartext. .terraform.lock.hcl IS committed on purpose: it pins
+# provider versions so CI and local runs resolve identically.
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+*.tfvars

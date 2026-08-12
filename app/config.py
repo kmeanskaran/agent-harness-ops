@@ -1,4 +1,5 @@
 """Central configuration, loaded from environment / .env."""
+
 from __future__ import annotations
 
 import os
@@ -28,10 +29,14 @@ class Settings:
     )
 
     # --- Model selection ---
-    # MODEL_PROVIDER one of: ollama (default, from .env) | groq | openai | anthropic
+    # MODEL_PROVIDER one of: ollama (default) | groq | openai | anthropic | bedrock
     MODEL_PROVIDER: str = os.getenv("MODEL_PROVIDER", "ollama").lower()
     MODEL_NAME: str = os.getenv("MODEL_NAME", "")
     MODEL_TEMPERATURE: float = float(os.getenv("MODEL_TEMPERATURE", "0.4"))
+
+    # Bedrock: region for the Bedrock client. No key — boto3 resolves creds from
+    # the default chain (local `aws configure` profile in dev, ECS task role in prod).
+    AWS_REGION: str = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-east-1"))
 
     # Ollama
     OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "gemma4:31b-cloud")

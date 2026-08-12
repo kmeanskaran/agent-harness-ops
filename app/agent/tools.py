@@ -4,9 +4,8 @@
 It is intentionally the only outward tool — drafts must come from the source,
 not the web.
 """
-from __future__ import annotations
 
-from typing import Literal
+from __future__ import annotations
 
 from app.config import get_settings
 

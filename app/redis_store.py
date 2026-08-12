@@ -4,6 +4,7 @@ Celery broker, Celery result backend, and this job/result store.
 A job is a Redis hash at `jobs:{job_id}` with a 2h TTL — no database, no
 cleanup. Fields match the data model in idea.md.
 """
+
 from __future__ import annotations
 
 import json
@@ -20,9 +21,7 @@ _client: redis.Redis | None = None
 def get_client() -> redis.Redis:
     global _client
     if _client is None:
-        _client = redis.from_url(
-            get_settings().REDIS_URL, decode_responses=True
-        )
+        _client = redis.from_url(get_settings().REDIS_URL, decode_responses=True)
     return _client
 
 
@@ -154,7 +153,12 @@ def get_job(job_id: str) -> dict[str, Any] | None:
     return data or None
 
 
-def delete_job(job_id: str, email: str | None = None, project_id: str | None = None, thread_id: str | None = None) -> None:
+def delete_job(
+    job_id: str,
+    email: str | None = None,
+    project_id: str | None = None,
+    thread_id: str | None = None,
+) -> None:
     client = get_client()
     email = email or client.hget(_key(job_id), "email")
     project_id = project_id or client.hget(_key(job_id), "project_id")

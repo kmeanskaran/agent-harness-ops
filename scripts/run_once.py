@@ -4,6 +4,7 @@ Useful for testing the agent against your configured model:
 
     uv run python -m scripts.run_once
 """
+
 from __future__ import annotations
 
 import json

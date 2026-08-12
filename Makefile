@@ -1,4 +1,4 @@
-.PHONY: up down fresh logs restart
+.PHONY: up down fresh logs restart aws-destroy aws-nuke
 
 # Start all services (uses cache)
 up:
@@ -21,6 +21,16 @@ logs:
 # Restart a specific service: make restart s=worker
 restart:
 	docker compose restart $(s)
+
+# --- AWS teardown (POC: both workspaces are disposable) ---
+
+# Destroy the dev + prod stacks, keep the Terraform state backend
+aws-destroy:
+	cd terraform && ./destroy-all.sh
+
+# Destroy everything, including the state bucket and lock table
+aws-nuke:
+	cd terraform && ./destroy-all.sh --nuke
 
 
 🤖 Agentic Side

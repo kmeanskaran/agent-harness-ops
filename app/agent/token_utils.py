@@ -3,10 +3,10 @@
 Helps estimate token usage and enforce context limits to prevent silent failures
 and runaway costs.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,9 @@ def estimate_tokens(text: str) -> int:
     return len(text) // 4
 
 
-def validate_readme_size(readme: str, max_chars: int = 50000, max_tokens: int = 12000) -> tuple[bool, str]:
+def validate_readme_size(
+    readme: str, max_chars: int = 50000, max_tokens: int = 12000
+) -> tuple[bool, str]:
     """Validate README doesn't exceed size limits.
 
     Args:
@@ -88,7 +90,7 @@ def estimate_job_tokens(
     Returns breakdown of token usage per component.
     """
     readme_tokens = estimate_tokens(readme)
-    learnings_tokens = sum(estimate_tokens(l) for l in (learnings or []))
+    learnings_tokens = sum(estimate_tokens(item) for item in (learnings or []))
     hard_parts_tokens = sum(estimate_tokens(h) for h in (hard_parts or []))
     metadata_tokens = estimate_tokens(tone) + estimate_tokens(audience) + 100  # Buffer
 

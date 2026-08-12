@@ -1,23 +1,28 @@
 """DevVoice FastAPI app — clean endpoints with async job queue and rate limiting."""
+
 from __future__ import annotations
 
 import os
-from fastapi import FastAPI
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-from fastapi.responses import JSONResponse
 
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from langfuse import Langfuse
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from app.db import init_db
+from app.logging_config import setup_logging
 from app.routes import content, health, result
+
+# Configure structured JSON logging before anything else logs.
+setup_logging("api")
 
 # Initialize LangFuse for observability
 langfuse = Langfuse(
     secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
     public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
-    host=os.getenv("LANGFUSE_BASE_URL")
+    host=os.getenv("LANGFUSE_BASE_URL"),
 )
 
 # Rate limiter: 10 requests per minute per IP
@@ -31,10 +36,13 @@ app = FastAPI(
 
 # Register rate limiter
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, lambda request, exc: JSONResponse(
-    status_code=429,
-    content={"detail": "Rate limit exceeded: 10 requests per minute per IP"},
-))
+app.add_exception_handler(
+    RateLimitExceeded,
+    lambda request, exc: JSONResponse(
+        status_code=429,
+        content={"detail": "Rate limit exceeded: 10 requests per minute per IP"},
+    ),
+)
 
 app.include_router(health.router, tags=["health"])
 app.include_router(content.router, tags=["content"])

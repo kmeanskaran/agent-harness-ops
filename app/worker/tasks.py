@@ -9,27 +9,32 @@ Token optimization:
 - Truncates large READMEs to fit context windows
 - Caches extractions to avoid reprocessing
 """
+
 from __future__ import annotations
 
 import logging
 import os
 import time
 
-from langfuse.decorators import observe, langfuse_context
 from langfuse import Langfuse
+from langfuse.decorators import langfuse_context, observe
 
-from app import db
-from app import redis_store
+from app import db, redis_store
 from app.agent.orchestrator import run_job
-from app.agent.token_utils import validate_readme_size, truncate_readme, estimate_job_tokens, log_token_estimate  # noqa: F401
-from app.agent.readme_cache import get_cached_extraction, cache_extraction  # noqa: F401
+from app.agent.readme_cache import cache_extraction, get_cached_extraction  # noqa: F401
+from app.agent.token_utils import (  # noqa: F401
+    estimate_job_tokens,
+    log_token_estimate,
+    truncate_readme,
+    validate_readme_size,
+)
 from app.worker.celery_app import celery_app
 
 # Initialize LangFuse in worker
 langfuse = Langfuse(
     secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
     public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
-    host=os.getenv("LANGFUSE_BASE_URL")
+    host=os.getenv("LANGFUSE_BASE_URL"),
 )
 
 logger = logging.getLogger("devvoice.worker")
@@ -45,7 +50,9 @@ def build_brief(payload: dict) -> str:
     previous_result = payload.get("previous_result") or {}
     previous_sections: list[str] = []
     if previous_result.get("x_thread"):
-        previous_sections.append("### Previous X Thread\n" + "\n".join(f"- {x}" for x in previous_result["x_thread"]))
+        previous_sections.append(
+            "### Previous X Thread\n" + "\n".join(f"- {x}" for x in previous_result["x_thread"])
+        )
     if previous_result.get("linkedin_post"):
         previous_sections.append("### Previous LinkedIn Post\n" + previous_result["linkedin_post"])
     if previous_result.get("devto_article"):
@@ -124,34 +131,43 @@ def generate_content_task(job_id: str, payload: dict) -> dict:
     log_token_estimate(job_id, token_estimate)
 
     # Set LangFuse context with token information
-    langfuse_context.update_current_trace(**{
-        "user_id": payload.get("email", "unknown"),
-        "session_id": job_id,
-        "metadata": {
+    langfuse_context.update_current_trace(
+        **{
+            "user_id": payload.get("email", "unknown"),
+            "session_id": job_id,
+            "metadata": {
+                "job_id": job_id,
+                "platforms": platforms,
+                "tone": payload.get("tone"),
+                "audience": payload.get("audience"),
+                "readme_length": len(readme),
+                "readme_truncated": payload.get("readme_truncated", False),
+                "estimated_tokens": token_estimate["total"],
+                "token_breakdown": {
+                    "readme": token_estimate["readme"],
+                    "learnings": token_estimate["learnings"],
+                    "hard_parts": token_estimate["hard_parts"],
+                    "overhead": token_estimate["overhead"],
+                },
+                "email": payload.get("email"),
+            },
+        }
+    )
+
+    # One structured event per job start — queryable by job_id in Logs Insights.
+    logger.info(
+        "job start",
+        extra={
+            "event": "job_start",
             "job_id": job_id,
-            "platforms": platforms,
+            "platform": platform,
             "tone": payload.get("tone"),
             "audience": payload.get("audience"),
-            "readme_length": len(readme),
-            "readme_truncated": payload.get("readme_truncated", False),
-            "estimated_tokens": token_estimate["total"],
-            "token_breakdown": {
-                "readme": token_estimate["readme"],
-                "learnings": token_estimate["learnings"],
-                "hard_parts": token_estimate["hard_parts"],
-                "overhead": token_estimate["overhead"],
-            },
-            "email": payload.get("email")
-        }
-    })
-
-    logger.info("=" * 70)
-    logger.info(f"JOB START  | job_id={job_id} | platform={platform}")
-    logger.info(f"           | tone={payload.get('tone')} | audience={payload.get('audience')}")
-    logger.info(f"           | readme_len={len(readme)} chars | est_tokens={token_estimate['total']}K")
-    if payload.get("readme_truncated"):
-        logger.warning(f"           | README WAS TRUNCATED to fit context")
-    logger.info("=" * 70)
+            "readme_chars": len(readme),
+            "est_tokens_k": token_estimate["total"],
+            "readme_truncated": bool(payload.get("readme_truncated")),
+        },
+    )
 
     redis_store.set_status(job_id, "running", "orchestrator")
     db.update_job_progress(job_id, "running", "orchestrator")
@@ -161,7 +177,16 @@ def generate_content_task(job_id: str, payload: dict) -> dict:
 
         def on_progress(status: str, step: str) -> None:
             elapsed = time.time() - started_at
-            logger.info(f"PROGRESS   | job_id={job_id} | status={status} | step={step} | elapsed={elapsed:.1f}s")
+            logger.info(
+                "job progress",
+                extra={
+                    "event": "job_progress",
+                    "job_id": job_id,
+                    "status": status,
+                    "step": step,
+                    "elapsed_s": round(elapsed, 1),
+                },
+            )
             redis_store.set_status(job_id, status, step)
             db.update_job_progress(job_id, status, step)
 
@@ -175,18 +200,27 @@ def generate_content_task(job_id: str, payload: dict) -> dict:
         )
 
         elapsed = time.time() - started_at
-        logger.info(f"JOB DONE   | job_id={job_id} | platform={platform} | elapsed={elapsed:.1f}s")
-        logger.info("=" * 70)
+        logger.info(
+            "job done",
+            extra={
+                "event": "job_done",
+                "job_id": job_id,
+                "platform": platform,
+                "elapsed_s": round(elapsed, 1),
+            },
+        )
 
         # Update LangFuse with success
-        langfuse_context.update_current_trace(**{
-            "metadata": {
-                "status": "completed",
-                "duration_seconds": elapsed,
-                "platforms_generated": list(result.keys()),
-                "estimated_tokens_used": token_estimate["total"],
+        langfuse_context.update_current_trace(
+            **{
+                "metadata": {
+                    "status": "completed",
+                    "duration_seconds": elapsed,
+                    "platforms_generated": list(result.keys()),
+                    "estimated_tokens_used": token_estimate["total"],
+                }
             }
-        })
+        )
 
         redis_store.set_awaiting_approval(job_id, result)
         db.mark_job_awaiting_approval(job_id, result)
@@ -194,18 +228,30 @@ def generate_content_task(job_id: str, payload: dict) -> dict:
 
     except Exception as exc:
         elapsed = time.time() - started_at
-        logger.error(f"JOB FAILED | job_id={job_id} | elapsed={elapsed:.1f}s | error={type(exc).__name__}: {exc}")
-        logger.info("=" * 70)
+        # exc_info=True attaches the traceback as an "error" field in the JSON.
+        logger.error(
+            "job failed",
+            extra={
+                "event": "job_failed",
+                "job_id": job_id,
+                "elapsed_s": round(elapsed, 1),
+                "error_type": type(exc).__name__,
+                "error_msg": str(exc),
+            },
+            exc_info=True,
+        )
 
         # Update LangFuse with failure
-        langfuse_context.update_current_trace(**{
-            "metadata": {
-                "status": "failed",
-                "duration_seconds": elapsed,
-                "error": f"{type(exc).__name__}: {exc}",
-                "estimated_tokens_used": token_estimate["total"],
+        langfuse_context.update_current_trace(
+            **{
+                "metadata": {
+                    "status": "failed",
+                    "duration_seconds": elapsed,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "estimated_tokens_used": token_estimate["total"],
+                }
             }
-        })
+        )
 
         redis_store.set_error(job_id, f"{type(exc).__name__}: {exc}")
         db.fail_job(job_id, f"{type(exc).__name__}: {exc}")

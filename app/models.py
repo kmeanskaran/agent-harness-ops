@@ -1,4 +1,5 @@
 """Pydantic request/response models for the HTTP layer."""
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
@@ -6,6 +7,7 @@ from pydantic import BaseModel, Field
 
 class ContentRequest(BaseModel):
     """Input for content generation endpoints."""
+
     email: str = Field(..., min_length=3, description="Unique user email.")
     readme: str = Field(
         ...,
@@ -25,6 +27,7 @@ class ContentRequest(BaseModel):
 
 class JobResponse(BaseModel):
     """Immediate response when job is enqueued."""
+
     job_id: str
     status: str
     thread_id: str | None = None
@@ -33,8 +36,11 @@ class JobResponse(BaseModel):
 
 class ResultResponse(BaseModel):
     """Result when checking job status."""
+
     job_id: str
-    status: str  # queued, running, extracting, writing, reviewing, awaiting_approval, completed, failed
+    status: (
+        str  # queued, running, extracting, writing, reviewing, awaiting_approval, completed, failed
+    )
     current_step: str | None = None
     thread_id: str | None = None
     parent_job_id: str | None = None
@@ -47,6 +53,7 @@ class ResultResponse(BaseModel):
 
 class RevisionRequest(BaseModel):
     """Minimal revision input for a previous job."""
+
     email: str = Field(..., min_length=3, description="Unique user email.")
     instruction: str = Field(..., min_length=1, description="What should change in the revision.")
     tone: str | None = Field(default=None, description="Optional new tone/style for this revision.")
