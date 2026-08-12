@@ -72,3 +72,8 @@ aws-destroy:
 # Destroy everything, including the state bucket and lock table
 aws-nuke:
 	cd terraform && ./destroy-all.sh --nuke
+
+# Prove nothing billable is left: make aws-verify-clean
+# Exits non-zero and lists identifiers if anything remains.
+aws-verify-clean:
+	@AWS_PROFILE=$(profile) ./scripts/aws-verify-clean.sh
