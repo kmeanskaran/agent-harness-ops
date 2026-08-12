@@ -1,4 +1,10 @@
-.PHONY: up down fresh logs restart aws-destroy aws-nuke
+.PHONY: up down fresh logs restart \
+        aws-logs aws-errors aws-status aws-url aws-destroy aws-nuke
+
+# Which deployed environment the aws-* targets talk to. Override per command:
+#   make aws-logs s=worker env=prod
+env     ?= dev
+profile ?= mgmt
 
 # Start all services (uses cache)
 up:
@@ -22,6 +28,41 @@ logs:
 restart:
 	docker compose restart $(s)
 
+# --- AWS: observing the deployed stack ---
+
+# Live-tail one service: make aws-logs s=worker   (s=api|worker|frontend)
+aws-logs:
+	aws logs tail /ecs/agent-harness-$(env)/$(or $(s),worker) \
+	  --follow --format short --profile $(profile)
+
+# Errors from all three services in the last 30m: make aws-errors
+aws-errors:
+	@for svc in api worker frontend; do \
+	  echo "── $$svc"; \
+	  aws logs tail /ecs/agent-harness-$(env)/$$svc --since 30m \
+	    --filter-pattern ERROR --format short --profile $(profile) || true; \
+	done
+
+# Is it up? Task counts, plus ECS events when a service will not start —
+# which is where crash reasons appear before anything reaches CloudWatch.
+aws-status:
+	@aws ecs describe-services --cluster agent-harness-$(env) --profile $(profile) \
+	  --services agent-harness-$(env)-api agent-harness-$(env)-worker agent-harness-$(env)-frontend \
+	  --query 'services[].{service:serviceName,desired:desiredCount,running:runningCount,pending:pendingCount}' \
+	  --output table
+	@echo "── recent events"
+	@aws ecs describe-services --cluster agent-harness-$(env) --profile $(profile) \
+	  --services agent-harness-$(env)-api agent-harness-$(env)-worker agent-harness-$(env)-frontend \
+	  --query 'services[].events[0].message' --output text | tr '\t' '\n'
+
+# Print the live URL and check it: make aws-url
+aws-url:
+	@url=$$(aws elbv2 describe-load-balancers --profile $(profile) \
+	  --names agent-harness-$(env)-alb --query 'LoadBalancers[0].DNSName' --output text); \
+	echo "http://$$url"; \
+	curl -sS -o /dev/null -w "  /          HTTP %{http_code}\n" "http://$$url/" || true; \
+	curl -sS -w "  /api/health %{http_code} " "http://$$url/api/health" || true; echo
+
 # --- AWS teardown (POC: both workspaces are disposable) ---
 
 # Destroy the dev + prod stacks, keep the Terraform state backend
@@ -31,32 +72,3 @@ aws-destroy:
 # Destroy everything, including the state bucket and lock table
 aws-nuke:
 	cd terraform && ./destroy-all.sh --nuke
-
-
-🤖 Agentic Side
-Orchestrator only coordinates, never writes content
-Extractor pulls grounded claims from README into an insights file
-3 writers (X, LinkedIn, article) draft only from insights, so they can't hallucinate
-Reviewer verifies drafts and fact-checks via web search
-Each subagent runs in an isolated context
-Progressive disclosure: agents load only their own skill file
-Shared per-job virtual filesystem instead of chat history
-Human-in-the-loop: approve or request revision
-Revisions spawn child jobs with previous output as context
-⚙️ Backend
-FastAPI validates, truncates, enqueues, and returns job_id instantly
-Token caps and rate limiting on ingestion
-Celery workers run the agent pipeline via Redis queue
-REST APIs for jobs, projects, approvals, revisions
-Redis holds queue, live status, results (TTL), LLM cache
-PostgreSQL holds users, projects, jobs, revision chains
-Full user history and versioning
-Progress streamed to Redis, polled every 2s
-Langfuse traces every stage by job_id
-Swappable LLMs: Ollama / Groq / OpenAI / Anthropic
-🖥️ Frontend
-React SPA to submit, track live, approve or revise
-nginx serves the SPA and proxies /api as the single entry point
-🐳 Ops
-5 Docker Compose services: frontend, API, worker, Postgres, Redis
-One docker compose up and everything is wired
