@@ -192,6 +192,12 @@ jobs:
     if: needs.target.outputs.env != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # This job also runs `terraform apply` (targeted), so it needs the same
+    # protection from cancellation as `deploy`. Its own group, not deploy's, so
+    # the two can never wait on each other within a single run.
+    concurrency:
+      group: ecr-${{ needs.target.outputs.env }}
+      cancel-in-progress: false
     env:
       ENV: ${{ needs.target.outputs.env }}
     steps:
@@ -255,6 +261,15 @@ jobs:
     if: needs.target.outputs.env != ''
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Job-level concurrency overrides the workflow-level `cancel-in-progress:
+    # true`, which is right for checks and dangerous here: cancelling a run
+    # mid-`terraform apply` strands the DynamoDB state lock and blocks every
+    # later deploy until someone runs `terraform force-unlock`. Rapid pushes
+    # still cancel redundant CHECK runs; an in-flight apply is left alone, and a
+    # second deploy to the same environment queues behind it instead of racing.
+    concurrency:
+      group: deploy-${{ needs.target.outputs.env }}
+      cancel-in-progress: false
     # THIS is the approval gate. The `prod` GitHub Environment has a required
     # reviewer, so a prod deploy pauses here until it is approved. `dev` has no
     # protection rules and runs straight through.
