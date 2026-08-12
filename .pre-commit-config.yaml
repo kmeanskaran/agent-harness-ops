@@ -11,6 +11,9 @@ repos:
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
+        # Two trailing spaces are a markdown hard line break — meaningful in the
+        # article drafts under docs/. Strip trailing whitespace everywhere else.
+        args: ["--markdown-linebreak-ext=md"]
       - id: end-of-file-fixer
       - id: check-yaml
       - id: check-json

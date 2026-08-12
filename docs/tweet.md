@@ -53,8 +53,8 @@ No waiting. No blocking. Just async magic.
 
 Same README twice? Don't regenerate.
 
-**Frontend Cache:** "Did I already make X for this?"
-**Redis Cache:** Store every LLM response by prompt hash
+**Frontend Cache:** "Did I already make X for this?"  
+**Redis Cache:** Store every LLM response by prompt hash  
 **Anthropic Cache:** Native prompt caching (90% token discount)
 
 Recurring work costs 10% of first-run cost. Fire and forget.
@@ -99,10 +99,10 @@ Total: ~3000 lines of code. Took a week with iteration.
 
 ## Why This Works Better
 
-**Grounded generation:** Everything sourced from README, nothing hallucinated.
-**Scalable:** Add workers, handle more jobs.
-**Cheap:** Caching eliminates redundant API calls.
-**Reliable:** Jobs persist, retryable on failure.
+**Grounded generation:** Everything sourced from README, nothing hallucinated.  
+**Scalable:** Add workers, handle more jobs.  
+**Cheap:** Caching eliminates redundant API calls.  
+**Reliable:** Jobs persist, retryable on failure.  
 **Fast:** Async means instant feedback.
 
 ---
@@ -111,8 +111,8 @@ Total: ~3000 lines of code. Took a week with iteration.
 
 User generates X, LinkedIn, dev.to for "Building Agents" README:
 
-**First time:** $0.30 (full LLM calls)
-**Same README again:** $0.00 (cached results, instant)
+**First time:** $0.30 (full LLM calls)  
+**Same README again:** $0.00 (cached results, instant)  
 **Change LinkedIn tone only:** $0.02 (only regenerate LinkedIn)
 
 By user 100: Cost per request approaches zero.
@@ -121,7 +121,7 @@ By user 100: Cost per request approaches zero.
 
 ## Key Insight: Specialization > Generalization
 
-One prompt trying to do 5 things → confusion.
+One prompt trying to do 5 things → confusion.  
 Five agents each doing one thing well → quality.
 
 Same principle applies to architecture. Each component does one job. Coordinator wires them together.
