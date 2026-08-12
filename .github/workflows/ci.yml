@@ -131,6 +131,15 @@ jobs:
       - name: Worker started without crashing
         run: docker compose ps --services --status running | grep -qx worker
 
+      # tests/test_dependencies.py checks pyproject.toml against the RUNNER's
+      # environment. This checks the built IMAGE — the artifact that actually
+      # ships. Provider imports in app/agent/model.py are lazy, so a missing
+      # package survives boot and the health check and only fails when a job
+      # runs with that provider selected (bedrock is the default on AWS).
+      - name: Deployed image has every model provider package
+        run: |
+          docker compose exec -T app python -c "import langchain_ollama, langchain_groq, langchain_openai, langchain_anthropic, langchain_aws, aws_bedrock_token_generator; print('all provider packages present')"
+
       - name: Dump logs on failure
         if: failure()
         run: docker compose logs --no-color --tail=200
