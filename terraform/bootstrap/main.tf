@@ -166,9 +166,14 @@ data "aws_iam_policy_document" "github_deploy" {
     sid    = "ManageStack"
     effect = "Allow"
     # The services Terraform creates/updates for this project.
+    #
+    # route53 is required even though no DNS records are declared: a Cloud Map
+    # private DNS namespace (aws_service_discovery_private_dns_namespace) creates
+    # a Route 53 private hosted zone under the hood, and deleting it on destroy
+    # needs the matching permissions.
     actions = [
       "ec2:*", "ecs:*", "elasticloadbalancing:*", "rds:*", "elasticache:*",
-      "ecr:*", "logs:*", "servicediscovery:*", "secretsmanager:*",
+      "ecr:*", "logs:*", "servicediscovery:*", "route53:*", "secretsmanager:*",
       "iam:*", "budgets:*", "cloudwatch:*", "sns:*", "application-autoscaling:*",
     ]
     resources = ["*"]
