@@ -217,7 +217,7 @@ Currently returns 0 because orchestrator doesn't use cache yet (future enhanceme
 ### Q: Do I need to change my code?
 **A:** No! Everything is automatic:
 - API validates automatically
-- Worker truncates automatically  
+- Worker truncates automatically
 - LangFuse tracking automatic
 - Logs updated automatically
 

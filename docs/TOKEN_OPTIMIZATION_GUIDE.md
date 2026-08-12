@@ -321,7 +321,7 @@ from app.agent.readme_cache import get_cached_extraction, cache_extraction
 
 def run_job(...):
     # ... setup ...
-    
+
     # Check cache before extraction
     cached_extraction = get_cached_extraction(brief_md)
     if cached_extraction:
@@ -330,10 +330,10 @@ def run_job(...):
     else:
         # Run normal pipeline
         # ... orchestrator runs extraction ...
-        
+
         # After extraction, cache it
         cache_extraction(brief_md, extracted_insights)
-    
+
     # Continue with writers + reviewer
 ```
 
@@ -381,7 +381,7 @@ curl -X POST http://localhost:8000/generate \
   }'
 
 # Check logs for:
-# "JOB TOKEN ESTIMATE | est_tokens=3..." 
+# "JOB TOKEN ESTIMATE | est_tokens=3..."
 # Should see breakdown in LangFuse trace
 ```
 

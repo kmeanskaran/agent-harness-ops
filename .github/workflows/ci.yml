@@ -1,26 +1,43 @@
-# CI — runs on every push to master and every PR. No AWS credentials, no deploy.
+# One pipeline: check, then deploy. Checks run on everything; deploys only ever
+# happen after all four checks pass.
 #
-#   quality    pre-commit (ruff lint+format, terraform fmt, hygiene, secret scan)
-#   terraform  validate the Terraform config
-#   test       pytest — pure-function unit tests, no services needed
-#   smoke      boot the real stack with docker compose and exercise it
+#   CHECKS (no AWS credentials, no deploy)
+#     quality    pre-commit (ruff lint+format, terraform fmt, hygiene, secret scan)
+#     terraform  validate the Terraform config
+#     test       pytest — pure-function unit tests, no services needed
+#     smoke      boot the real stack with docker compose and exercise it
 #
-# The same pre-commit hooks run locally on `git commit`, so CI and your machine
-# are gated by identical rules.
+#   DEPLOY (only on push, never on a PR)
+#     push to aws-deployment  ->  dev   (automatic)
+#     push tag  prod-*        ->  prod  (pauses for the reviewer on the `prod`
+#                                        GitHub Environment)
+#
+# Promote dev -> prod by tagging the exact commit that is already running in dev:
+#     git tag prod-2026-08-12 && git push origin prod-2026-08-12
+#
+# WHY ONE FILE: chaining a second workflow off this one (`workflow_run`) and the
+# manual "Run workflow" button both require the workflow file to live on the
+# repo's DEFAULT branch. `master` is deliberately kept free of AWS code, so both
+# are unavailable — but plain `push` triggers work from any branch, and the
+# approval gate is attached to the Environment rather than the trigger, so
+# nothing is lost.
 name: ci
 
 on:
   push:
     branches: [master, main, aws-deployment]
+    tags: ["prod-*"]
   pull_request:
 
-# A new push to the same branch cancels the previous, still-running CI.
+# A new push to the same ref cancels the previous, still-running pipeline.
+# Deploys are excluded from cancellation below via the environment concurrency.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
+  id-token: write # OIDC, for the deploy jobs
 
 jobs:
   quality:
@@ -121,3 +138,173 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose down -v --remove-orphans
+
+  # ===========================================================================
+  # DEPLOY — everything below runs only on a push (never a PR) and only after
+  # all four checks above are green.
+  # ===========================================================================
+
+  # Which environment does this ref target? Empty means "don't deploy".
+  target:
+    name: resolve target
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      env: ${{ steps.pick.outputs.env }}
+    steps:
+      - id: pick
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/prod-*)          echo "env=prod" >> "$GITHUB_OUTPUT" ;;
+            refs/heads/aws-deployment) echo "env=dev"  >> "$GITHUB_OUTPUT" ;;
+            *)                         echo "env="     >> "$GITHUB_OUTPUT" ;;
+          esac
+      - name: Report
+        run: echo "target=${{ steps.pick.outputs.env || 'none — checks only' }}"
+
+  # Chicken-and-egg: the build job pushes to ECR repos that Terraform creates.
+  # On the FIRST deploy of a workspace they don't exist yet, so create just those
+  # two resources up front. A no-op on every later run.
+  ecr:
+    name: ensure ECR repos
+    needs: [target, quality, terraform, test, smoke]
+    if: needs.target.outputs.env != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ENV: ${{ needs.target.outputs.env }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - name: Apply ECR repositories only
+        run: |
+          cd terraform
+          terraform init -backend-config=backend.hcl
+          terraform workspace select "$ENV" || terraform workspace new "$ENV"
+          terraform apply -auto-approve -no-color -var="aws_profile=" \
+            -target=aws_ecr_repository.api \
+            -target=aws_ecr_repository.frontend
+
+  build:
+    name: build ${{ matrix.image }}
+    needs: [target, ecr]
+    if: needs.target.outputs.env != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        include:
+          - image: api
+            context: .
+            dockerfile: Dockerfile
+          - image: frontend
+            context: ./frontend
+            dockerfile: ./frontend/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64 # Fargate x86
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/agent-harness-${{ needs.target.outputs.env }}-${{ matrix.image }}:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/agent-harness-${{ needs.target.outputs.env }}-${{ matrix.image }}:latest
+          # Layer cache scoped per image so api and frontend don't evict each other.
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  deploy:
+    name: deploy to ${{ needs.target.outputs.env }}
+    needs: [target, build]
+    if: needs.target.outputs.env != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # THIS is the approval gate. The `prod` GitHub Environment has a required
+    # reviewer, so a prod deploy pauses here until it is approved. `dev` has no
+    # protection rules and runs straight through.
+    environment: ${{ needs.target.outputs.env }}
+    env:
+      ENV: ${{ needs.target.outputs.env }}
+      TAG: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      # terraform_wrapper mangles stdout, which breaks `terraform output` capture.
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Init and select workspace
+        run: |
+          cd terraform
+          terraform init -backend-config=backend.hcl
+          terraform workspace select "$ENV" || terraform workspace new "$ENV"
+
+      # NOTE: the plan is deliberately NOT uploaded as an artifact. It contains
+      # random_password.db in cleartext and artifacts are downloadable by anyone
+      # with repo read access. The apply below re-plans internally instead.
+      - name: Plan
+        run: |
+          cd terraform
+          terraform plan -no-color -var="aws_profile=" \
+            -var="api_image_tag=${TAG}" -var="frontend_image_tag=${TAG}"
+
+      - name: Apply
+        run: |
+          cd terraform
+          terraform apply -auto-approve -no-color -var="aws_profile=" \
+            -var="api_image_tag=${TAG}" -var="frontend_image_tag=${TAG}"
+
+      # Task definitions pin :latest, so a same-tag push needs an explicit roll.
+      - name: Roll ECS services
+        run: |
+          for svc in api worker frontend; do
+            aws ecs update-service --cluster "agent-harness-$ENV" \
+              --service "agent-harness-$ENV-$svc" --force-new-deployment >/dev/null
+            echo "rolled $svc"
+          done
+
+      - name: Wait for services to stabilise
+        run: |
+          aws ecs wait services-stable \
+            --cluster "agent-harness-$ENV" \
+            --services "agent-harness-$ENV-api" \
+                       "agent-harness-$ENV-worker" \
+                       "agent-harness-$ENV-frontend"
+
+      - name: Post-deploy smoke test
+        run: |
+          cd terraform
+          url=$(terraform output -raw app_url)
+          curl -fsS --retry 10 --retry-delay 6 --retry-all-errors "$url/api/health" \
+            | tee /dev/stderr | grep -q '"status":"ok"'
+          echo "::notice title=Deployed::$ENV is live at $url"
+
+      - name: Recent service events on failure
+        if: failure()
+        run: |
+          for svc in api worker frontend; do
+            echo "── $svc"
+            aws ecs describe-services --cluster "agent-harness-$ENV" \
+              --services "agent-harness-$ENV-$svc" \
+              --query 'services[0].events[:10].message' --output text || true
+          done

@@ -20,35 +20,74 @@ short-term bearer token at runtime, so **no model API key is stored anywhere**.
 
 ## Deploy
 
+Deployment is driven by git. `.github/workflows/ci.yml` runs the checks and then
+deploys — there is exactly **one** command you ever run locally, and only once.
+
+### Step 1 — bootstrap (local, once per AWS account)
+
+Creates the Terraform state bucket, the lock table, and the GitHub OIDC deploy
+role. It has to be local: GitHub cannot authenticate to AWS until the role it
+assumes exists.
+
 ```bash
-export AWS_PROFILE=dev
-aws sso login --profile dev          # SSO expires ~12h
-
-# 1. One-time: state backend
-cd bootstrap && terraform init && terraform apply && cd ..
-
-# 2. Init + select environment
+export AWS_PROFILE=mgmt
+cd bootstrap
 terraform init
-terraform workspace new dev          # later: terraform workspace select dev
+terraform apply -var="aws_profile=mgmt"
+terraform output github_deploy_role_arn
+```
 
-# 3. ECR first (images need somewhere to go)
-terraform apply -target=aws_ecr_repository.api -target=aws_ecr_repository.frontend
+### Step 2 — GitHub setup (once)
 
-# 4. Build + push images
-./push-images.sh dev
+Settings → Secrets and variables → Actions → **Variables**:
 
-# 5. Full apply (pin the tag push-images.sh printed)
-terraform apply -var=api_image_tag=<sha> -var=frontend_image_tag=<sha>
+| Name | Value |
+| --- | --- |
+| `AWS_DEPLOY_ROLE_ARN` | the output from step 1 |
+| `AWS_REGION` | `us-east-1` |
 
-# 6. Real secret values (placeholders won't work)
+Settings → **Environments**: create `dev` (no rules) and `prod` (add yourself as
+a **required reviewer**).
+
+No GitHub *secrets* are needed — auth is OIDC, and app secrets live in AWS
+Secrets Manager.
+
+### Step 3 — deploy dev: just push
+
+```bash
+git push origin aws-deployment
+```
+
+Checks run (pre-commit, terraform validate, pytest, compose smoke test). If they
+all pass, the pipeline creates ECR repos if missing, builds both images, applies
+Terraform, rolls the ECS services, waits for `services-stable`, and curls
+`/api/health` through the ALB. The run summary prints the live URL.
+
+Every later push to `aws-deployment` repeats this. Terraform is declarative, so
+a push with no infra change only rolls new images.
+
+### Step 4 — promote dev → prod: tag the commit
+
+```bash
+git tag prod-2026-08-12
+git push origin prod-2026-08-12
+```
+
+Same pipeline, `prod` workspace, same commit SHA so the images are identical.
+The deploy job **pauses for approval** — the `prod` Environment's required
+reviewer — and you approve it in the Actions tab.
+
+### Step 5 — real secret values (once per environment)
+
+Terraform creates the secrets with `REPLACE_ME` placeholders:
+
+```bash
 aws secretsmanager put-secret-value --secret-id agent-harness-dev/LANGFUSE_SECRET_KEY --secret-string '...'
 aws secretsmanager put-secret-value --secret-id agent-harness-dev/LANGFUSE_PUBLIC_KEY --secret-string '...'
 aws secretsmanager put-secret-value --secret-id agent-harness-dev/TAVILY_API_KEY     --secret-string '...'
-aws ecs update-service --cluster agent-harness-dev --service agent-harness-dev-api    --force-new-deployment
-aws ecs update-service --cluster agent-harness-dev --service agent-harness-dev-worker --force-new-deployment
-
-terraform output app_url             # open in a browser
 ```
+
+Then push again (or re-run the workflow) to roll the tasks onto the new values.
 
 Confirm the **SNS subscription email** after the first apply, or error alerts
 won't be delivered.
