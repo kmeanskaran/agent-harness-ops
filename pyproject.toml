@@ -12,6 +12,10 @@ dependencies = [
     "langchain-groq>=1.1.2",
     "langchain-ollama>=1.1.0",
     "langchain-openai>=1.2.2",
+    # Required by MODEL_PROVIDER=bedrock, which is the default on AWS. The
+    # Dockerfile installs from this file, so anything missing here is missing
+    # from the image — see tests/test_dependencies.py.
+    "langchain-aws>=0.2.10",
     "aws-bedrock-token-generator>=1.0.0",
     "psycopg[binary]>=3.2.9",
     "python-dotenv>=1.2.2",
