@@ -3,7 +3,8 @@
 #     image from ECR, ship logs to CloudWatch, read secrets to inject as env.
 #   - Task role: assumed by your code at runtime — call Bedrock. Folds in the
 #     Claude + Gemma + bearer-token permissions from the old standalone
-#     bedrock.tf (which this replaces). app + worker share it in dev.
+#     bedrock.tf (which this replaces), plus whatever var.model_name is set to.
+#     app + worker share it in dev.
 
 data "aws_caller_identity" "current" {}
 
@@ -71,6 +72,26 @@ resource "aws_iam_role_policy" "task_bedrock" {
         Effect   = "Allow"
         Action   = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
         Resource = ["arn:aws:bedrock:*::foundation-model/google.gemma-*"]
+      },
+      {
+        # Whatever MODEL_NAME is set to, so switching models does not silently
+        # break at runtime with AccessDeniedException. The statements above are
+        # family wildcards for the two paths that predate this; this one tracks
+        # the actual configured id, which is what the app invokes.
+        #
+        # Both ARN shapes are granted because a model id can name either a
+        # foundation model (`deepseek.v3.2`) or a cross-region inference profile
+        # (`us.anthropic.claude-sonnet-4-6`), and the profile form additionally
+        # needs invoke rights on the underlying foundation model — hence the
+        # `us.`/`eu.`/`apac.` prefix being stripped for the second entry.
+        Sid    = "InvokeConfiguredModel"
+        Effect = "Allow"
+        Action = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
+        Resource = distinct([
+          "arn:aws:bedrock:*::foundation-model/${var.model_name}",
+          "arn:aws:bedrock:*::foundation-model/${replace(var.model_name, "/^(us|eu|apac)\\./", "")}",
+          "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/${var.model_name}",
+        ])
       },
       {
         Sid      = "CallWithBearerToken"
