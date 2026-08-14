@@ -1,13 +1,16 @@
 """Parsing the finished agent workspace back into the API response.
 
 This is the seam where free-form model output becomes a typed contract, so it's
-where a regression is both most likely and least visible — a broken parse
-returns 200 with empty fields rather than raising.
+where a regression is both most likely and least visible — a broken parse used
+to return 200 with empty fields rather than raising. A total blank now raises
+(see EmptyGenerationError); partial output still passes through quietly.
 """
 
 from __future__ import annotations
 
-from app.agent.orchestrator import _parse_thread, assemble_result
+import pytest
+
+from app.agent.orchestrator import EmptyGenerationError, _parse_thread, assemble_result
 
 
 def _files(**paths: str) -> dict:
@@ -53,12 +56,21 @@ class TestAssembleResult:
         files = _files(linkedin_draft="# LinkedIn Post\n\nthe actual body")
         assert assemble_result(files, "j1", ["linkedin"])["linkedin_post"] == "the actual body"
 
-    def test_missing_draft_files_do_not_raise(self):
-        result = assemble_result({}, "j1", ["x", "linkedin", "devto"])
+    def test_missing_every_draft_file_raises(self):
+        # Previously this returned empty strings, so a run where the agent wrote
+        # nothing was stored as a successful blank post. That is how a MODEL_NAME
+        # without tool-calling support failed silently in dev; it must be loud.
+        with pytest.raises(EmptyGenerationError) as exc:
+            assemble_result({}, "j1", ["x", "linkedin", "devto"])
+        assert "MODEL_NAME" in str(exc.value)
+
+    def test_partial_output_is_not_treated_as_failure(self):
+        # One platform of three is a content problem for the reviewer, not the
+        # structural failure the guard exists to catch.
+        files = _files(linkedin_draft="post body")
+        result = assemble_result(files, "j1", ["x", "linkedin"])
+        assert result["linkedin_post"] == "post body"
         assert result["x_thread"] == []
-        assert result["linkedin_post"] == ""
-        assert result["devto_article"] == ""
-        assert result["review_notes"] is None
 
     def test_review_notes_are_always_included(self):
         files = _files(review_notes="looks good")

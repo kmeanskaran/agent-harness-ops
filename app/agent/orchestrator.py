@@ -251,6 +251,22 @@ def _parse_thread(md: str) -> list[str]:
     return [t for t in (t.strip() for t in tweets) if t]
 
 
+class EmptyGenerationError(RuntimeError):
+    """Every requested platform came back empty — the pipeline produced nothing.
+
+    Raised so the job fails loudly instead of being stored as a successful blank
+    post. The usual cause is a MODEL_NAME that cannot emit structured tool calls:
+    the orchestrator writes drafts via the write_file tool, so a model that
+    replies in prose leaves the workspace empty without raising anything itself.
+    """
+
+
+# Result keys that hold generated content, by platform. `review_notes` is
+# deliberately excluded — it is metadata, and a job with notes but no drafts is
+# still a failure.
+_PLATFORM_KEYS = {"x": "x_thread", "linkedin": "linkedin_post", "devto": "devto_article"}
+
+
 def assemble_result(files: dict, job_id: str, platforms: Iterable[str]) -> dict:
     ws = _workspace(job_id)
     platforms = set(platforms)
@@ -265,6 +281,19 @@ def assemble_result(files: dict, job_id: str, platforms: Iterable[str]) -> dict:
         result["linkedin_post"] = re.sub(r"^#.*\n+", "", body, count=1).strip()
     if "devto" in platforms:
         result["devto_article"] = (_file_text(files, f"{ws}/devto_draft.md") or "").strip()
+
+    # Fail loudly when NOTHING was generated. A partial result (one platform of
+    # three) is left alone — that is a content problem for the reviewer, not the
+    # structural failure this guards against.
+    if platforms and not any(result.get(_PLATFORM_KEYS[p]) for p in platforms):
+        drafts = sorted(k for k in files if k.startswith(f"{ws}/") and k.endswith("_draft.md"))
+        raise EmptyGenerationError(
+            f"job {job_id}: no content for any requested platform "
+            f"({', '.join(sorted(platforms))}). "
+            f"Draft files in workspace: {drafts or 'none'}. "
+            "If none, the agent wrote no files — check that MODEL_NAME supports "
+            "tool calling."
+        )
 
     result["review_notes"] = _file_text(files, f"{ws}/review_notes.md")
     return result
