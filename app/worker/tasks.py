@@ -16,9 +16,6 @@ import logging
 import os
 import time
 
-from langfuse import Langfuse
-from langfuse.decorators import langfuse_context, observe
-
 from app import db, redis_store
 from app.agent.orchestrator import run_job
 from app.agent.readme_cache import cache_extraction, get_cached_extraction  # noqa: F401
@@ -28,6 +25,11 @@ from app.agent.token_utils import (  # noqa: F401
     truncate_readme,
     validate_readme_size,
 )
+
+# Langfuse tracing is disabled — see app/observability.py to re-enable.
+# from langfuse import Langfuse
+# from langfuse.decorators import langfuse_context, observe
+from app.observability import Langfuse, langfuse_context, observe
 from app.worker.celery_app import celery_app
 
 # Initialize LangFuse in worker

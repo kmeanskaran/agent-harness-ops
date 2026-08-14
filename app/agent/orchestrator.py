@@ -23,11 +23,14 @@ from functools import lru_cache
 from deepagents import create_deep_agent
 from deepagents.backends import StateBackend
 from deepagents.backends.utils import create_file_data
-from langfuse.decorators import langfuse_context, observe
 
 from app.agent.model import get_model
 from app.agent.tools import fact_check
 from app.config import CONTEXT_DIR, SKILLS_DIR
+
+# Langfuse tracing is disabled — see app/observability.py to re-enable.
+# from langfuse.decorators import langfuse_context, observe
+from app.observability import langfuse_context, observe
 
 # Virtual paths inside the agent's in-state filesystem.
 SKILLS_ROOT = "/skills"

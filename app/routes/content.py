@@ -13,8 +13,6 @@ import os
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
-from langfuse import Langfuse
-from langfuse.decorators import langfuse_context, observe
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -29,6 +27,11 @@ from app.models import (
     RevisionRequest,
     UserProfileResponse,
 )
+
+# Langfuse tracing is disabled — see app/observability.py to re-enable.
+# from langfuse import Langfuse
+# from langfuse.decorators import langfuse_context, observe
+from app.observability import Langfuse, langfuse_context, observe
 from app.worker.tasks import generate_content_task
 
 logger = logging.getLogger(__name__)

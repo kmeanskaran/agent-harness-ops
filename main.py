@@ -6,13 +6,16 @@ import os
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from langfuse import Langfuse
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from app.db import init_db
 from app.logging_config import setup_logging
+
+# Langfuse tracing is disabled — see app/observability.py to re-enable.
+# from langfuse import Langfuse
+from app.observability import Langfuse
 from app.routes import content, health, result
 
 # Configure structured JSON logging before anything else logs.
