@@ -111,6 +111,15 @@ role. It has to be local: GitHub cannot authenticate to AWS until the role it
 assumes exists. Idempotent, and the ARN is identical every time.
 
 ```bash
+make aws-setup                # bootstrap + terraform init + print what GitHub needs
+make aws-setup args=--check   # report what exists, change nothing
+```
+
+`aws-setup` also runs `terraform init -reconfigure -backend-config=backend.hcl`
+against the bucket it just created, so the main config is ready to use locally.
+If you only want the bootstrap half:
+
+```bash
 make aws-bootstrap            # prints the role ARN to paste into GitHub
 make aws-arn                  # print it again later, without applying
 ```
@@ -124,12 +133,38 @@ Settings → Secrets and variables → Actions → **Variables**:
 | `AWS_DEPLOY_ROLE_ARN` | the output from step 1 |
 | `AWS_REGION` | `us-east-1` |
 
-Settings → **Environments**: create `dev` (no rules) and `prod` (add yourself as
-a **required reviewer** — that is the approval gate).
+Settings → Secrets and variables → Actions → **Secrets**:
 
-No GitHub *secrets* are needed: CI auth is OIDC, app secrets live in AWS Secrets
-Manager. Until `AWS_DEPLOY_ROLE_ARN` is set the pipeline runs checks only and
-stays green.
+| Name | Value |
+| --- | --- |
+| `BUDGET_EMAIL` | address for AWS budget + error alerts |
+
+Settings → **Environments**: create `dev` (no rules) and `prod` (add yourself as
+a **required reviewer** — that is the approval gate). Note that an environment
+with *no* protection rule does not pause: the `environment: prod` job resolves
+and runs straight through, looking identical in the workflow file to a gated one.
+
+**Why `BUDGET_EMAIL` is a secret and the other two are variables.** Variables are
+readable by anyone and printed in logs; the role ARN and region are identifiers,
+not credentials, so that is fine. The alert address is a real inbox and this repo
+is public, so `var.budget_email` deliberately has **no default** — nothing to
+leak, and a missing value fails loudly instead of quietly mailing a stale
+address. CI passes it as `TF_VAR_budget_email` in both the `ecr` and `deploy`
+jobs. Both are needed: a `-target`ed apply still evaluates every variable, so
+without it the `ecr` job fails *before* `deploy` ever runs.
+
+Locally, export it before any apply:
+
+```bash
+export TF_VAR_budget_email="you@example.com"
+```
+
+Teardown is exempt — `destroy-all.sh` supplies a placeholder, so a missing value
+can never block you from stopping the meter.
+
+Beyond that, no GitHub secrets are needed: CI auth is OIDC and the app's own
+secrets live in AWS Secrets Manager. Until `AWS_DEPLOY_ROLE_ARN` is set the
+pipeline runs checks only and stays green.
 
 ### Step 3 — deploy dev: just push
 

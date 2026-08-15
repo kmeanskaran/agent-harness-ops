@@ -109,12 +109,24 @@ isolated environments (`dev`, `prod`) via Terraform workspaces, OIDC auth (no
 AWS keys in CI), and Bedrock via the ECS task role (no model API key anywhere).
 
 ```bash
-make aws-bootstrap            # once per account — prints the OIDC role ARN
+make aws-setup                # once per account — bootstrap + init, prints what GitHub needs
 git push origin aws-deployment  # deploys dev
 git tag prod-YYYY-MM-DD && git push --tags   # promotes to prod (needs approval)
 make aws-url                  # live URL + health check
-make aws-destroy              # stop the meter
+make aws-destroy              # stop the meter (add only=prod to scope it)
 ```
+
+`make aws-setup` prints the three values GitHub needs — two **variables**
+(`AWS_DEPLOY_ROLE_ARN`, `AWS_REGION`) and one **secret**, `BUDGET_EMAIL`, the
+address for AWS budget and error alerts.
+
+`BUDGET_EMAIL` is required. `var.budget_email` has no default, deliberately —
+this repo is public and the address is a real inbox, so it is supplied at apply
+time rather than committed. Without the secret the deploy fails at the `ecr`
+job, before `deploy` runs. For local applies, `export TF_VAR_budget_email=...`.
+
+Also **confirm the SNS subscription email** after the first apply, or the alerts
+you just configured will not be delivered.
 
 Full guide — architecture, setup, operations, cost, teardown:
 **[terraform/README.md](terraform/README.md)**.
