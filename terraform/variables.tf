@@ -58,5 +58,11 @@ variable "model_provider" {
 variable "model_name" {
   description = "MODEL_NAME env (the Bedrock model id). Must support tool calling."
   type        = string
-  default     = "deepseek.v3.2"
+  # deepseek.v3.2 emits valid tool calls but does not converge in a long
+  # delegation loop: with the workspace paths fixed it reached the extractor and
+  # wrote extracted_insights.md, then called `ls` on the same directory ~40
+  # times without moving on to the writer. GLM is built for extended
+  # tool-calling loops. zai.glm-5 and moonshotai.kimi-k2.5 are the fallbacks —
+  # all three verified `stopReason: tool_use` against this account.
+  default = "zai.glm-4.7"
 }

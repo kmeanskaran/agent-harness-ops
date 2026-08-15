@@ -51,6 +51,15 @@ def _serialise(generations: Sequence[Generation]) -> str:
                         "type": g.message.type,
                         "content": g.message.content,
                         "additional_kwargs": g.message.additional_kwargs,
+                        # tool_calls and response_metadata are NOT recoverable
+                        # from content: providers populate them alongside it, and
+                        # a cached reply that loses them reads to LangGraph as a
+                        # plain final answer with nothing to dispatch — the exact
+                        # silent-blank-output failure Gemma produced.
+                        "tool_calls": getattr(g.message, "tool_calls", None) or [],
+                        "invalid_tool_calls": getattr(g.message, "invalid_tool_calls", None) or [],
+                        "response_metadata": getattr(g.message, "response_metadata", None) or {},
+                        "id": getattr(g.message, "id", None),
                     },
                     "generation_info": g.generation_info,
                 }
@@ -77,6 +86,10 @@ def _deserialise(raw: str) -> list[Generation]:
             msg = AIMessage(
                 content=m["content"],
                 additional_kwargs=m.get("additional_kwargs", {}),
+                tool_calls=m.get("tool_calls", []),
+                invalid_tool_calls=m.get("invalid_tool_calls", []),
+                response_metadata=m.get("response_metadata", {}),
+                id=m.get("id"),
             )
             out.append(
                 ChatGeneration(
