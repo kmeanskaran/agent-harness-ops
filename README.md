@@ -100,6 +100,25 @@ curl -X POST http://localhost:8000/generate \
 curl http://localhost:8000/result/<job_id>   # poll until awaiting_approval
 ```
 
+## Deploy to AWS
+
+The `aws-deployment` branch ships the whole stack to **ECS Fargate** — ALB,
+RDS Postgres, ElastiCache Redis, three Fargate services, Secrets Manager,
+CloudWatch alarms — as Terraform, deployed by GitHub Actions on push. Two
+isolated environments (`dev`, `prod`) via Terraform workspaces, OIDC auth (no
+AWS keys in CI), and Bedrock via the ECS task role (no model API key anywhere).
+
+```bash
+make aws-bootstrap            # once per account — prints the OIDC role ARN
+git push origin aws-deployment  # deploys dev
+git tag prod-YYYY-MM-DD && git push --tags   # promotes to prod (needs approval)
+make aws-url                  # live URL + health check
+make aws-destroy              # stop the meter
+```
+
+Full guide — architecture, setup, operations, cost, teardown:
+**[terraform/README.md](terraform/README.md)**.
+
 ## API Reference
 
 Interactive docs at `http://localhost:8000/docs`.
@@ -197,4 +216,4 @@ agent-harness-ops/
 
 ## License
 
-MIT
+[MIT](LICENSE) © Karan Shingde

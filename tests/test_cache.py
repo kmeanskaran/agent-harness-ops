@@ -4,8 +4,8 @@ A cached reply is replayed to LangGraph in place of a real model response. If
 the round-trip drops `tool_calls`, the replayed message looks like a plain final
 answer: nothing to dispatch, the graph ends after one turn, no files are
 written, and `assemble_result` sees empty drafts. That is the same silent blank
-output Gemma produced (see docs/fix_dev.md, bug 1) — but triggered by a cache
-hit, so it would appear intermittently and only after a warm cache.
+output a model with no Converse tool-call support produces — but triggered by a
+cache hit, so it would appear intermittently and only once the cache is warm.
 
 Nothing raises when this happens, so it needs a test.
 """

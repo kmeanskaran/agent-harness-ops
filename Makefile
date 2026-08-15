@@ -1,5 +1,5 @@
 .PHONY: up down fresh logs restart \
-        aws-bootstrap aws-arn \
+        aws-setup aws-bootstrap aws-arn \
         aws-logs aws-errors aws-status aws-url \
         aws-destroy aws-nuke aws-verify-clean
 
@@ -42,6 +42,14 @@ restart:
 #
 # Safe to re-run — it is idempotent, and the ARN is identical every time because
 # the role name and account are fixed, so the GitHub variable never changes.
+# One command for a clean account: bootstrap + terraform init + tell you exactly
+# what to put in GitHub. Use this rather than aws-bootstrap unless you only want
+# the bootstrap half.
+#   make aws-setup                 # do it
+#   make aws-setup args=--check    # report state, change nothing
+aws-setup:
+	@AWS_PROFILE=$(profile) ./scripts/aws-setup.sh $(args)
+
 aws-bootstrap:
 	cd terraform/bootstrap && \
 	  terraform init -input=false && \
@@ -102,11 +110,20 @@ aws-url:
 
 # --- AWS teardown (POC: both workspaces are disposable) ---
 
-# Destroy the dev + prod stacks, keep the Terraform state backend
+# Destroy app stacks, keep the Terraform state backend.
+#
+#   make aws-destroy              both workspaces (dev + prod)
+#   make aws-destroy only=prod    that workspace only, leaving the other running
+#
+# NOTE: this target deliberately ignores `env=`. The other aws-* targets read a
+# single environment; teardown defaults to ALL of them, because "stop the meter"
+# must not quietly leave a second stack billing. Narrowing is opt-in via `only=`
+# so it can never happen by accident.
 aws-destroy:
-	cd terraform && ./destroy-all.sh
+	cd terraform && ./destroy-all.sh $(if $(only),--env $(only))
 
-# Destroy everything, including the state bucket and lock table
+# Destroy everything, including the state bucket and lock table. Always spans
+# both workspaces — it removes the shared backend, so it cannot be narrowed.
 aws-nuke:
 	cd terraform && ./destroy-all.sh --nuke
 

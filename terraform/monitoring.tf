@@ -9,10 +9,19 @@ variable "budget_limit_usd" {
   default     = "50"
 }
 
+# Deliberately no default: this is a real inbox and the repo is public, so the
+# address is supplied at apply time instead of committed. CI passes it from the
+# BUDGET_EMAIL Actions secret via TF_VAR_budget_email; locally, export the same
+# variable. A missing value fails the apply with a prompt rather than silently
+# alerting the wrong address.
 variable "budget_email" {
-  description = "Email notified at the budget thresholds."
+  description = "Email notified at the budget thresholds. Set via TF_VAR_budget_email."
   type        = string
-  default     = "karanshingde@gmail.com"
+
+  validation {
+    condition     = can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.budget_email))
+    error_message = "budget_email must be a valid email address (set TF_VAR_budget_email)."
+  }
 }
 
 # --- Application error monitoring -------------------------------------------

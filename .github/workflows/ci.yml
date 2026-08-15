@@ -200,6 +200,9 @@ jobs:
       cancel-in-progress: false
     env:
       ENV: ${{ needs.target.outputs.env }}
+      # A -target'ed apply still evaluates every variable, and budget_email has
+      # no default — so this job needs the secret too, not just `deploy`.
+      TF_VAR_budget_email: ${{ secrets.BUDGET_EMAIL }}
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
@@ -277,6 +280,10 @@ jobs:
     env:
       ENV: ${{ needs.target.outputs.env }}
       TAG: ${{ github.sha }}
+      # Budget alert address. Kept out of the repo (public) and supplied here
+      # from the BUDGET_EMAIL secret; var.budget_email has no default, so a
+      # missing secret fails the apply rather than mailing a stale address.
+      TF_VAR_budget_email: ${{ secrets.BUDGET_EMAIL }}
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4

@@ -1,14 +1,24 @@
 #!/usr/bin/env bash
-# Tear down the whole POC — both workspaces, one command.
+# Tear down the POC — by default both workspaces, one command.
 #
-#   ./destroy-all.sh          destroy the dev + prod app stacks (keeps the
-#                             Terraform state backend, which is ~free)
-#   ./destroy-all.sh --nuke   the above, PLUS delete the workspaces, empty the
-#                             state bucket (all versions) and destroy bootstrap.
-#                             Leaves the AWS account with nothing.
+#   ./destroy-all.sh              destroy the dev + prod app stacks (keeps the
+#                                 Terraform state backend, which is ~free)
+#   ./destroy-all.sh --env prod   destroy ONLY that workspace, leaving the other
+#                                 one running
+#   ./destroy-all.sh --nuke       destroy both, PLUS delete the workspaces, empty
+#                                 the state bucket (all versions) and destroy
+#                                 bootstrap. Leaves the AWS account with nothing.
+#
+# --nuke always spans both workspaces: it removes the shared state backend, so
+# tearing down one environment while leaving the other's state homeless is never
+# what you want. Use --env for single-environment teardown.
 #
 # Env:
-#   AWS_PROFILE   local profile to auth with (default: mgmt)
+#   AWS_PROFILE           local profile to auth with (default: mgmt)
+#   TF_VAR_budget_email   required by the config (no default, so it is not
+#                         committed to this public repo). Any syntactically
+#                         valid address works for a destroy — the budget is
+#                         being torn down, not created.
 #
 # Every resource in this config is built to be destroyable — no deletion
 # protection, no RDS final snapshot, force_delete on ECR, 0-day secret recovery
@@ -19,9 +29,33 @@ cd "$(dirname "$0")"
 
 PROFILE="${AWS_PROFILE:-mgmt}"
 NUKE=false
-[ "${1:-}" = "--nuke" ] && NUKE=true
-
 ENVS=(dev prod)
+
+# var.budget_email has no default so it never lands in this public repo. A
+# destroy still evaluates it, so fall back to a placeholder rather than blocking
+# a teardown on an unrelated variable — nothing is created here.
+export TF_VAR_budget_email="${TF_VAR_budget_email:-teardown@example.com}"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --nuke) NUKE=true; shift ;;
+    --env)
+      [ $# -ge 2 ] || { echo "--env needs a workspace name (dev|prod)" >&2; exit 2; }
+      case "$2" in
+        dev|prod) ENVS=("$2") ;;
+        *) echo "unknown workspace '$2' (expected dev or prod)" >&2; exit 2 ;;
+      esac
+      shift 2 ;;
+    *) echo "unknown argument '$1' (expected --nuke or --env <dev|prod>)" >&2; exit 2 ;;
+  esac
+done
+
+# --nuke destroys the shared state backend, so it must span every workspace.
+if $NUKE && [ "${#ENVS[@]}" -ne 2 ]; then
+  echo "--nuke cannot be combined with --env: it deletes the shared state" >&2
+  echo "backend, which would strand the other workspace's state." >&2
+  exit 2
+fi
 
 echo "About to DESTROY these workspaces in profile '$PROFILE': ${ENVS[*]}"
 $NUKE && echo "  --nuke: will ALSO delete the state bucket, lock table and workspaces."
