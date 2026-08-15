@@ -7,7 +7,11 @@ not the web.
 
 from __future__ import annotations
 
+import logging
+
 from app.config import get_settings
+
+logger = logging.getLogger("devvoice.agent")
 
 
 def fact_check(query: str, max_results: int = 3) -> dict:
@@ -18,9 +22,18 @@ def fact_check(query: str, max_results: int = 3) -> dict:
     grounded in extracted_insights.md.
     """
     s = get_settings()
+    # Placeholder values like REPLACE_ME are normalised to "" in app.config, so
+    # this guard fires for "unset" and "not yet configured" alike.
     if not s.TAVILY_API_KEY:
         return {"error": "TAVILY_API_KEY not set; skip web verification."}
     from tavily import TavilyClient
 
-    client = TavilyClient(api_key=s.TAVILY_API_KEY)
-    return client.search(query, max_results=max_results, topic="general")
+    # fact_check is optional enrichment — a bad key or a network blip must not
+    # take down the whole run. Return the error as a tool result so the model
+    # can note it and move on.
+    try:
+        client = TavilyClient(api_key=s.TAVILY_API_KEY)
+        return client.search(query, max_results=max_results, topic="general")
+    except Exception as exc:  # noqa: BLE001 — any failure here is non-fatal
+        logger.warning("fact_check failed: %s: %s", type(exc).__name__, exc)
+        return {"error": f"web verification unavailable ({type(exc).__name__}); skip it."}

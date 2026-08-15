@@ -26,6 +26,7 @@ from deepagents.backends.utils import create_file_data
 
 from app.agent.model import get_model
 from app.agent.tools import fact_check
+from app.agent.tracing import ToolTraceHandler
 from app.config import CONTEXT_DIR, SKILLS_DIR
 
 # Langfuse tracing is disabled — see app/observability.py to re-enable.
@@ -96,13 +97,20 @@ def _seed_files(
 # Subagents — each isolated, each loading only its own skill
 # --------------------------------------------------------------------------- #
 def _subagents() -> list[dict]:
+    # NOTE: these prompts must not contain `{...}` placeholders. The graph is
+    # built once and shared across jobs (see build_orchestrator), so nothing
+    # interpolates them — any brace would reach the model as literal text and
+    # send it looking for a path that does not exist.
     common = (
-        "You are a DevVoice subagent. You operate on files in the job workspace "
-        "at /workspace/{job_id} (the orchestrator gives you the job_id). Read "
-        "the files you are told to read, including any revision files when "
-        "present, follow your skill exactly, and save "
-        "your output with write_file. Stay strictly grounded in "
-        "extracted_insights.md — never invent facts."
+        "You are a DevVoice subagent. You operate on files in a job workspace. "
+        "Your task description from the orchestrator contains the absolute "
+        "workspace path (it looks like /workspace/<job_id>); use that exact path "
+        "verbatim for every read and write, and never guess or invent one. If it "
+        "is missing from your task description, say so and stop instead of "
+        "guessing. Read the files you are told to read, including any revision "
+        "files when present, follow your skill exactly, and save your output "
+        "with write_file. Stay strictly grounded in extracted_insights.md — "
+        "never invent facts."
     )
 
     return [
@@ -113,8 +121,8 @@ def _subagents() -> list[dict]:
                 "extracted_insights.md. Does not write any platform content."
             ),
             "system_prompt": common
-            + "\n\nFollow the `extractor` skill. Read /workspace/{job_id}/brief.md "
-            "and write /workspace/{job_id}/extracted_insights.md.",
+            + "\n\nFollow the `extractor` skill. Read brief.md in the workspace "
+            "and write extracted_insights.md there.",
             "skills": [SKILLS_ROOT],
         },
         {
@@ -124,8 +132,8 @@ def _subagents() -> list[dict]:
                 "extracted_insights.md. Use only when 'x' is a requested platform."
             ),
             "system_prompt": common
-            + "\n\nFollow the `x-writer` skill. Read extracted_insights.md and "
-            "write /workspace/{job_id}/x_draft.md.",
+            + "\n\nFollow the `x-writer` skill. Read extracted_insights.md in the "
+            "workspace and write x_draft.md there.",
             "skills": [SKILLS_ROOT],
         },
         {
@@ -136,7 +144,7 @@ def _subagents() -> list[dict]:
             ),
             "system_prompt": common
             + "\n\nFollow the `linkedin-writer` skill. Read extracted_insights.md "
-            "and write /workspace/{job_id}/linkedin_draft.md.",
+            "in the workspace and write linkedin_draft.md there.",
             "skills": [SKILLS_ROOT],
         },
         {
@@ -147,7 +155,7 @@ def _subagents() -> list[dict]:
             ),
             "system_prompt": common
             + "\n\nFollow the `devto-writer` skill. Read extracted_insights.md "
-            "and write /workspace/{job_id}/devto_draft.md.",
+            "in the workspace and write devto_draft.md there.",
             "skills": [SKILLS_ROOT],
         },
         {
@@ -159,7 +167,7 @@ def _subagents() -> list[dict]:
             "system_prompt": common
             + "\n\nFollow the `content-reviewer` skill. Check each draft against "
             "extracted_insights.md, rewrite drafts in place to fix issues, and "
-            "write /workspace/{job_id}/review_notes.md. You may use fact_check "
+            "write review_notes.md in the workspace. You may use fact_check "
             "to verify an external claim, but never add new claims.",
             "skills": [SKILLS_ROOT],
             "tools": [fact_check],
@@ -170,23 +178,31 @@ def _subagents() -> list[dict]:
 # --------------------------------------------------------------------------- #
 # Orchestrator construction (built once, reused across jobs)
 # --------------------------------------------------------------------------- #
+# NOTE: this prompt must not contain `{...}` placeholders. The graph is built
+# once and cached (build_orchestrator), so nothing interpolates it — a literal
+# `{job_id}` would reach the model as text and send it reading a path that does
+# not exist. The real workspace path is supplied in the user message instead.
 ORCHESTRATOR_PROMPT = """You are the DevVoice orchestrator.
 
 You turn a developer's README + learnings into accurate, platform-native content
 by delegating to subagents. Your job is coordination and verification, NOT
 writing the content yourself.
 
-Workflow for job {job_id}:
-1. Read /workspace/{job_id}/brief.md to learn the requested `platforms`.
+The user message gives you the absolute workspace path for this job (it looks
+like /workspace/<job_id>). Use that exact path verbatim in every file operation
+and in every subagent task description. Never substitute a placeholder.
+
+Workflow:
+1. Read brief.md in the workspace to learn the requested `platforms`.
 2. Delegate to the `extractor` subagent to produce extracted_insights.md.
 3. For EACH requested platform, delegate to the matching writer subagent
-   (x -> x-writer, linkedin -> linkedin-writer, devto -> devto-writer). Pass the
-   job_id explicitly.
+   (x -> x-writer, linkedin -> linkedin-writer, devto -> devto-writer).
 4. Delegate to the `content-reviewer` subagent to verify and correct all drafts.
 5. Confirm the requested draft files exist, then reply with a one-line summary.
 
 Rules:
-- Always pass the job_id to subagents so they read/write the right workspace.
+- Every subagent task description MUST state the absolute workspace path, so
+  they read and write the right job's files.
 - Only generate the platforms listed in the brief.
 - Never write or edit draft files yourself — re-delegate if a draft is wrong.
 - Follow the durable guidance in your memory (AGENTS.md)."""
@@ -352,7 +368,12 @@ def run_job(
 
     last_status = "running"
     final_files: dict = files
+    # The workspace path is stated first and in full: it is the only place the
+    # real job_id enters the prompt, and every file operation depends on it.
     user_msg = (
+        f"The workspace for this job is {ws}\n"
+        f"Every file you or a subagent reads or writes lives directly under that "
+        f"exact path. Pass it verbatim in every subagent task description.\n\n"
         f"Run the DevVoice pipeline for job_id={job_id}. The brief is at "
         f"{ws}/brief.md. If {ws}/revision_request.md or {ws}/previous_output.md exist, use them "
         f"to revise the content instead of starting blind. Generate exactly the "
@@ -360,9 +381,10 @@ def run_job(
     )
 
     # Stream values so we can infer progress from which files now exist.
+    tracer = ToolTraceHandler(job_id)
     for chunk in agent.stream(
         {"messages": [{"role": "user", "content": user_msg}], "files": files},
-        config={"recursion_limit": 100},
+        config={"recursion_limit": 100, "callbacks": [tracer]},
         stream_mode="values",
     ):
         cur = chunk.get("files") or {}

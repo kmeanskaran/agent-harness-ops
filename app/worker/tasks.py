@@ -16,6 +16,8 @@ import logging
 import os
 import time
 
+from celery.exceptions import SoftTimeLimitExceeded
+
 from app import db, redis_store
 from app.agent.orchestrator import run_job
 from app.agent.readme_cache import cache_extraction, get_cached_extraction  # noqa: F401
@@ -227,6 +229,29 @@ def generate_content_task(job_id: str, payload: dict) -> dict:
         redis_store.set_awaiting_approval(job_id, result)
         db.mark_job_awaiting_approval(job_id, result)
         return {"job_id": job_id, "status": "awaiting_approval"}
+
+    except SoftTimeLimitExceeded:
+        # The wall-clock backstop fired: the agent loop ran without finishing.
+        # Celery raises this *inside* the task precisely so we can record a
+        # cause; without it the job would sit at `running` forever holding a
+        # concurrency slot. Re-raised below as a normal failure.
+        elapsed = time.time() - started_at
+        msg = (
+            f"Job exceeded the {celery_app.conf.task_soft_time_limit}s time limit "
+            f"without producing a result. The agent loop did not converge."
+        )
+        logger.error(
+            "job timed out",
+            extra={
+                "event": "job_timeout",
+                "job_id": job_id,
+                "elapsed_s": round(elapsed, 1),
+                "soft_limit_s": celery_app.conf.task_soft_time_limit,
+            },
+        )
+        redis_store.set_error(job_id, f"JobTimeout: {msg}")
+        db.fail_job(job_id, f"JobTimeout: {msg}")
+        raise
 
     except Exception as exc:
         elapsed = time.time() - started_at
